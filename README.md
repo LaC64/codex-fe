@@ -1,6 +1,6 @@
 # Codex CLI Front End
 
-Meant to replace Codexs CLI's Front End
+Intended to replace the default `codex resume` front-end picker.
 
 Interactive terminal picker for Codex sessions with:
 
@@ -11,6 +11,11 @@ Interactive terminal picker for Codex sessions with:
 - Resume selected session in its original folder
 - Open selected/favorite sessions in new Windows Terminal tabs
 - Chat title and tab color support
+
+## Important Behavior
+
+- This is a front end for `codex resume`.
+- It only shows sessions that have an explicit thread name in Codex's session index (for example, sessions named via `/rename`).
 
 ## Files
 
@@ -41,6 +46,32 @@ Open all favorites in new tabs:
 
 ```powershell
 .\codex-fe.cmd --open-favorites
+```
+
+## Run From Anywhere (Recommended)
+
+Put the folder containing `codex-fe.cmd` on your user `PATH` so you can run `codex-fe` from any directory.
+
+PowerShell (run once):
+
+```powershell
+$toolPath = "E:\GitHub\codex-fe"
+$current = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not $current) { $current = "" }
+if ($current -notlike "*$toolPath*") {
+	[Environment]::SetEnvironmentVariable(
+		"Path",
+		($current.TrimEnd(";") + ";" + $toolPath).Trim(";"),
+		"User"
+	)
+}
+```
+
+Then open a new terminal and verify:
+
+```powershell
+where.exe codex-fe
+codex-fe --list
 ```
 
 ## Picker Controls
