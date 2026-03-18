@@ -1,7 +1,10 @@
-# Codex Session Picker
+# Codex CLI Front End
+
+Meant to replace Codexs CLI's Front End
 
 Interactive terminal picker for Codex sessions with:
 
+- No need to switch to session folder to resume
 - Arrow-key navigation
 - Live type-to-filter
 - Favorites (pin/unpin) with persistence
