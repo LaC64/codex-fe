@@ -29,6 +29,7 @@ class SessionEntry:
 	session_id: str
 	thread_name: str
 	updated_at: str
+	created_at: str
 	cwd: str
 	model: str
 
@@ -63,6 +64,7 @@ def load_index(index_file: Path) -> list[SessionEntry]:
 				session_id=session_id,
 				thread_name=payload["thread_name"],
 				updated_at=payload["updated_at"],
+				created_at="",
 				cwd="",
 				model="",
 			)
@@ -70,13 +72,15 @@ def load_index(index_file: Path) -> list[SessionEntry]:
 	return sorted(entries, key=lambda e: (e.updated_at, e.thread_name), reverse=True)
 
 
-def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str]]:
-	# session_id -> (cwd, latest model seen in turn_context)
-	details: dict[str, tuple[str, str]] = {}
+def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str, str, str]]:
+	# session_id -> (cwd, latest model seen in turn_context, latest timestamp in file, created timestamp)
+	details: dict[str, tuple[str, str, str, str]] = {}
 	for file in sessions_root.rglob("*.jsonl"):
 		session_id = ""
 		cwd = ""
 		model = ""
+		last_ts = ""
+		created_ts = ""
 		try:
 			with file.open("r", encoding="utf-8", errors="replace") as handle:
 				for line in handle:
@@ -88,16 +92,20 @@ def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str]
 					except json.JSONDecodeError:
 						continue
 					obj_type = obj.get("type")
+					ts = str(obj.get("timestamp", "")).strip()
+					if ts and ts > last_ts:
+						last_ts = ts
 					payload = obj.get("payload", {})
 					if obj_type == "session_meta" and isinstance(payload, dict):
 						session_id = str(payload.get("id", "")).strip() or session_id
 						cwd = str(payload.get("cwd", "")).strip() or cwd
+						created_ts = str(payload.get("timestamp", "")).strip() or created_ts
 					elif obj_type == "turn_context" and isinstance(payload, dict):
 						model = str(payload.get("model", "")).strip() or model
 		except OSError:
 			continue
 		if session_id:
-			details[session_id] = (cwd, model)
+			details[session_id] = (cwd, model, last_ts, created_ts)
 	return details
 
 
@@ -264,8 +272,9 @@ def render_menu(
 	pin_w = 3
 	name_w = min(30, max(16, term_width // 5))
 	model_w = min(18, max(10, term_width // 8))
-	updated_w = 21
-	cwd_w = max(20, term_width - (pin_w + name_w + model_w + updated_w + 12))
+	updated_w = 9
+	created_w = 9
+	cwd_w = max(20, term_width - (pin_w + name_w + model_w + updated_w + created_w + 14))
 
 	print("\x1b[2J\x1b[H", end="")
 	print(
@@ -276,10 +285,11 @@ def render_menu(
 	print(
 		f"{GRAY}{'Pin'.ljust(pin_w)} {'Name'.ljust(name_w)}  "
 		f"{'Model'.ljust(model_w)}  {'Updated'.ljust(updated_w)}  "
+		f"{'Created'.ljust(created_w)}  "
 		f"{'Folder'.ljust(cwd_w)}{RESET}"
 	)
 	print(
-		f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + cwd_w + 8)}{RESET}"
+		f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + created_w + cwd_w + 10)}{RESET}"
 	)
 
 	if not entries:
@@ -294,10 +304,12 @@ def render_menu(
 		name = truncate_text(entry.thread_name, name_w)
 		model = truncate_text(entry.model or "(unknown)", model_w)
 		updated = truncate_text(relative_age(entry.updated_at), updated_w)
+		created = truncate_text(relative_age(entry.created_at), created_w)
 		cwd = truncate_text(entry.cwd or "(cwd unknown)", cwd_w)
 		line = (
 			f"{pin.ljust(pin_w)} {name.ljust(name_w)}  "
-			f"{model.ljust(model_w)}  {updated.ljust(updated_w)}  {cwd.ljust(cwd_w)}"
+			f"{model.ljust(model_w)}  {updated.ljust(updated_w)}  "
+			f"{created.ljust(created_w)}  {cwd.ljust(cwd_w)}"
 		)
 		if real_idx == selected:
 			print(f"{ORANGE}> {line}{RESET}")
@@ -542,6 +554,7 @@ def print_list(
 			f"{prefix}{entry.thread_name}",
 			entry.model or "(unknown)",
 			relative_age(entry.updated_at),
+			relative_age(entry.created_at),
 		]
 		if show_id:
 			parts.append(entry.session_id)
@@ -603,9 +616,13 @@ def main() -> int:
 	entries = load_index(index_file)
 	details_by_id = load_session_details_by_id(sessions_root)
 	for entry in entries:
-		cwd, model = details_by_id.get(entry.session_id, ("", ""))
+		cwd, model, last_ts, created_ts = details_by_id.get(entry.session_id, ("", "", "", ""))
 		entry.cwd = cwd
 		entry.model = model
+		if last_ts:
+			entry.updated_at = last_ts
+		if created_ts:
+			entry.created_at = created_ts
 
 	initial_filter = args.name.lower().strip()
 	if initial_filter:

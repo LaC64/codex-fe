@@ -11,8 +11,8 @@ Interactive terminal picker for Codex sessions with:
 
 ## Files
 
-- `list_codex_sessions.py` - main picker script
-- `list_codex_sessions.cmd` - Windows launcher
+- `codex-fe.py` - main picker script
+- `codex-fe.cmd` - Windows launcher
 
 ## Requirements
 
@@ -25,19 +25,19 @@ Interactive terminal picker for Codex sessions with:
 From this folder:
 
 ```powershell
-.\list_codex_sessions.cmd
+.\codex-fe.cmd
 ```
 
 List mode:
 
 ```powershell
-.\list_codex_sessions.cmd --list --show-cwd
+.\codex-fe.cmd --list --show-cwd
 ```
 
 Open all favorites in new tabs:
 
 ```powershell
-.\list_codex_sessions.cmd --open-favorites
+.\codex-fe.cmd --open-favorites
 ```
 
 ## Picker Controls
