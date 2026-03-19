@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,10 +7,13 @@ import ctypes
 import datetime as dt
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,9 +22,11 @@ ORANGE = "\x1b[38;2;242;140;40m"  # #F28C28
 GRAY = "\x1b[38;2;153;153;153m"   # medium gray
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
+FULL_CLEAR = "\x1b[3J\x1b[2J\x1b[H"
 RESUME_EXTRA_ARGS = [
 	"--dangerously-bypass-approvals-and-sandbox",
 ]
+SPINNER_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
 
 
 @dataclass
@@ -32,6 +37,21 @@ class SessionEntry:
 	created_at: str
 	cwd: str
 	model: str
+	is_named: bool
+
+
+@dataclass
+class PickerResult:
+	action: str
+	entry: SessionEntry | None
+
+
+def clean_text(value: str) -> str:
+	return " ".join(value.split())
+
+
+def normalize_title(value: str) -> str:
+	return clean_text(value).strip().lower()
 
 
 def load_index(index_file: Path) -> list[SessionEntry]:
@@ -67,20 +87,22 @@ def load_index(index_file: Path) -> list[SessionEntry]:
 				created_at="",
 				cwd="",
 				model="",
+				is_named=True,
 			)
 		)
 	return sorted(entries, key=lambda e: (e.updated_at, e.thread_name), reverse=True)
 
 
-def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str, str, str]]:
-	# session_id -> (cwd, latest model seen in turn_context, latest timestamp in file, created timestamp)
-	details: dict[str, tuple[str, str, str, str]] = {}
+def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str, str, str, str]]:
+	# session_id -> (cwd, latest model, last timestamp, created timestamp, first user preview)
+	details: dict[str, tuple[str, str, str, str, str]] = {}
 	for file in sessions_root.rglob("*.jsonl"):
 		session_id = ""
 		cwd = ""
 		model = ""
 		last_ts = ""
 		created_ts = ""
+		first_user_preview = ""
 		try:
 			with file.open("r", encoding="utf-8", errors="replace") as handle:
 				for line in handle:
@@ -102,10 +124,33 @@ def load_session_details_by_id(sessions_root: Path) -> dict[str, tuple[str, str,
 						created_ts = str(payload.get("timestamp", "")).strip() or created_ts
 					elif obj_type == "turn_context" and isinstance(payload, dict):
 						model = str(payload.get("model", "")).strip() or model
+					elif obj_type == "response_item" and isinstance(payload, dict):
+						if (
+							not first_user_preview
+							and payload.get("type") == "message"
+							and payload.get("role") == "user"
+						):
+							content = payload.get("content", [])
+							if isinstance(content, list):
+								for item in content:
+									if not isinstance(item, dict):
+										continue
+									text = item.get("input_text") or item.get("text")
+									if not isinstance(text, str):
+										continue
+									candidate = clean_text(text)
+									if not candidate:
+										continue
+									if candidate.startswith("# AGENTS.md instructions"):
+										continue
+									if candidate.startswith("<environment_context>"):
+										continue
+									first_user_preview = candidate[:120]
+									break
 		except OSError:
 			continue
 		if session_id:
-			details[session_id] = (cwd, model, last_ts, created_ts)
+			details[session_id] = (cwd, model, last_ts, created_ts, first_user_preview)
 	return details
 
 
@@ -154,6 +199,17 @@ def get_key() -> str:
 	if os.name == "nt":
 		import msvcrt
 
+		def alt_pressed() -> bool:
+			try:
+				user32 = ctypes.windll.user32
+				return bool(
+					(user32.GetAsyncKeyState(0x12) & 0x8000)  # VK_MENU
+					or (user32.GetAsyncKeyState(0xA4) & 0x8000)  # VK_LMENU
+					or (user32.GetAsyncKeyState(0xA5) & 0x8000)  # VK_RMENU
+				)
+			except Exception:
+				return False
+
 		ch = msvcrt.getwch()
 		if ch == "\x06":  # Ctrl+F
 			return "favorite"
@@ -178,8 +234,19 @@ def get_key() -> str:
 			}.get(ch2, "")
 		if ch == "\x08":
 			return "backspace"
-		if ch.lower() == "q":
-			return "quit"
+		if alt_pressed():
+			if ch.lower() == "q":
+				return "quit"
+			if ch.lower() == "a":
+				return "toggle_unnamed"
+			if ch == "O":
+				return "open_all_favorites"
+			if ch == "N":
+				return "new_chat_tab"
+			if ch == "n":
+				return "new_chat_current"
+			if ch.lower() == "r":
+				return "refresh"
 		if ch == "*":
 			return "favorite"
 		if ch.isprintable() and ch not in ("\t",):
@@ -199,20 +266,39 @@ def get_key() -> str:
 		if ch in ("\r", "\n"):
 			return "enter"
 		if ch == "\x1b":
-			seq = sys.stdin.read(2)
-			if seq == "[A":
-				return "up"
-			if seq == "[B":
-				return "down"
-			if seq == "[H":
-				return "home"
-			if seq == "[F":
-				return "end"
-			return "esc"
+			ready, _, _ = select.select([sys.stdin], [], [], 0.02)
+			if not ready:
+				return "esc"
+			next_ch = sys.stdin.read(1)
+			if next_ch == "[":
+				next2 = sys.stdin.read(1)
+				if next2 == "A":
+					return "up"
+				if next2 == "B":
+					return "down"
+				if next2 == "H":
+					return "home"
+				if next2 == "F":
+					return "end"
+				return ""
+			# Alt+<key> arrives as ESC + key on many Unix terminals.
+			if next_ch.lower() == "q":
+				return "quit"
+			if next_ch.lower() == "a":
+				return "toggle_unnamed"
+			if next_ch == "O":
+				return "open_all_favorites"
+			if next_ch == "N":
+				return "new_chat_tab"
+			if next_ch == "n":
+				return "new_chat_current"
+			if next_ch.lower() == "r":
+				return "refresh"
+			if next_ch.isprintable() and next_ch not in ("\t",):
+				return f"char:{next_ch}"
+			return ""
 		if ch in ("\x08", "\x7f"):
 			return "backspace"
-		if ch.lower() == "q":
-			return "quit"
 		if ch == "*":
 			return "favorite"
 		if ch.isprintable() and ch not in ("\t",):
@@ -241,21 +327,43 @@ def save_favorites(path: Path, favorites: set[str]) -> None:
 
 
 def apply_filter_and_sort(
-	entries: list[SessionEntry], query: str, favorites: set[str]
+	entries: list[SessionEntry], query: str, favorites: set[str], show_unnamed: bool
 ) -> list[SessionEntry]:
 	q = query.strip().lower()
-	filtered = entries
+	filtered = [e for e in entries if show_unnamed or e.is_named]
 	if q:
 		filtered = [
 			e
 			for e in entries
+			if (show_unnamed or e.is_named)
 			if q in e.thread_name.lower()
 			or q in e.model.lower()
 			or q in e.updated_at.lower()
 			or q in e.cwd.lower()
 		]
-	# Preserve updated-time order from source list, but move favorites to top.
-	return sorted(filtered, key=lambda e: 0 if e.session_id in favorites else 1)
+	# Keep named before unnamed, favorites on top inside each section.
+	return sorted(
+		filtered,
+		key=lambda e: (
+			0 if e.is_named else 1,
+			0 if e.session_id in favorites else 1,
+		),
+	)
+
+
+def build_display_rows(
+	entries: list[SessionEntry],
+) -> tuple[list[tuple[str, SessionEntry | None]], list[int]]:
+	rows: list[tuple[str, SessionEntry | None]] = []
+	entry_to_row: list[int] = []
+	first_unnamed_index = next((i for i, e in enumerate(entries) if not e.is_named), -1)
+	for i, entry in enumerate(entries):
+		if first_unnamed_index != -1 and i == first_unnamed_index and first_unnamed_index > 0:
+			rows.append(("sep", None))
+			rows.append(("label", None))
+		entry_to_row.append(len(rows))
+		rows.append(("entry", entry))
+	return rows, entry_to_row
 
 
 def render_menu(
@@ -264,10 +372,17 @@ def render_menu(
 	top: int,
 	query: str,
 	favorites: set[str],
-) -> tuple[int, int]:
+	show_unnamed: bool,
+) -> tuple[int, int, int, int]:
 	term_width = os.get_terminal_size().columns
 	term_height = os.get_terminal_size().lines
 	max_rows = max(5, term_height - 8)
+	lines: list[str] = []
+
+	def paint(lines_to_draw: list[str]) -> None:
+		body = "\n".join(f"{line}\x1b[K" for line in lines_to_draw)
+		sys.stdout.write("\x1b[H" + body + "\x1b[J")
+		sys.stdout.flush()
 
 	pin_w = 3
 	name_w = min(30, max(16, term_width // 5))
@@ -276,30 +391,52 @@ def render_menu(
 	created_w = 9
 	cwd_w = max(20, term_width - (pin_w + name_w + model_w + updated_w + created_w + 14))
 
-	print("\x1b[2J\x1b[H", end="")
-	print(
+	lines.append(
 		f"{ORANGE}Codex Resume Picker{RESET}  "
-		f"{GRAY}(Up/Down Enter select, Shift+Enter open tab, type filter, Backspace, Ctrl+F or * favorite, q quit){RESET}"
+		f"{GRAY}(Up/Down Enter select, Shift+Enter open session tab, Alt+n new chat here, Alt+N new chat tab, Alt+Shift+O open all favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
 	)
-	print(f"{ORANGE}Filter:{RESET} {GRAY}{query if query else '(none)'}{RESET}")
-	print(
+	unnamed_state = "ON" if show_unnamed else "OFF"
+	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}{RESET}")
+	lines.append(f"{ORANGE}Filter:{RESET} {GRAY}{query if query else '(none)'}{RESET}")
+	lines.append(
 		f"{GRAY}{'Pin'.ljust(pin_w)} {'Name'.ljust(name_w)}  "
 		f"{'Model'.ljust(model_w)}  {'Updated'.ljust(updated_w)}  "
 		f"{'Created'.ljust(created_w)}  "
 		f"{'Folder'.ljust(cwd_w)}{RESET}"
 	)
-	print(
+	lines.append(
 		f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + created_w + cwd_w + 10)}{RESET}"
 	)
 
 	if not entries:
-		print(f"{GRAY}(No sessions match current filter){RESET}")
-		print(f"\n{ORANGE}0{RESET}{GRAY}/0{RESET}")
-		return max_rows, term_height
+		lines.append(f"{GRAY}(No sessions match current filter){RESET}")
+		lines.append("")
+		lines.append(f"{ORANGE}0{RESET}{GRAY}/0{RESET}")
+		paint(lines)
+		return max_rows, term_height, top, 0
 
-	visible = entries[top : top + max_rows]
-	for idx, entry in enumerate(visible):
-		real_idx = top + idx
+	rows, entry_to_row = build_display_rows(entries)
+	if selected < 0:
+		selected = 0
+	elif selected >= len(entries):
+		selected = len(entries) - 1
+	selected_row = entry_to_row[selected]
+	max_top = max(0, len(rows) - max_rows)
+	effective_top = min(max(0, top), max_top)
+	visible = rows[effective_top : effective_top + max_rows]
+
+	for idx, (kind, payload) in enumerate(visible):
+		real_row = effective_top + idx
+		if kind == "sep":
+			sep = f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + created_w + cwd_w + 10)}{RESET}"
+			lines.append(sep)
+			continue
+		if kind == "label":
+			lines.append(f"{GRAY}  [Unnamed Sessions]{RESET}")
+			continue
+		entry = payload
+		if entry is None:
+			continue
 		pin = "*" if entry.session_id in favorites else " "
 		name = truncate_text(entry.thread_name, name_w)
 		model = truncate_text(entry.model or "(unknown)", model_w)
@@ -311,89 +448,149 @@ def render_menu(
 			f"{model.ljust(model_w)}  {updated.ljust(updated_w)}  "
 			f"{created.ljust(created_w)}  {cwd.ljust(cwd_w)}"
 		)
-		if real_idx == selected:
-			print(f"{ORANGE}> {line}{RESET}")
+		if real_row == selected_row:
+			lines.append(f"{ORANGE}> {line}{RESET}")
 		else:
-			print(f"{GRAY}  {line}{RESET}")
+			lines.append(f"{GRAY}  {line}{RESET}")
 
-	print(f"\n{ORANGE}{selected + 1}{RESET}{GRAY}/{len(entries)}{RESET}")
-	return max_rows, term_height
+	lines.append("")
+	lines.append(f"{ORANGE}{selected + 1}{RESET}{GRAY}/{len(entries)}{RESET}")
+	paint(lines)
+	return max_rows, term_height, effective_top, len(rows)
 
 
 def interactive_pick(
 	entries: list[SessionEntry],
 	favorites_file: Path,
 	open_in_tab_cb,
-) -> SessionEntry | None:
+	open_new_chat_tab_cb,
+	open_all_favorites_cb,
+	refresh_entries_cb,
+) -> PickerResult | None:
 	if not entries:
 		return None
 
 	favorites = load_favorites(favorites_file)
 	query = ""
-	view = apply_filter_and_sort(entries, query, favorites)
+	show_unnamed = False
+	all_entries = entries
+	view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
 	selected = 0
 	top = 0
-
-	while True:
-		max_rows, _ = render_menu(view, selected, top, query, favorites)
-		key = get_key()
-		if key in ("quit", "esc"):
-			return None
-		if key == "enter":
-			if not view:
-				continue
-			print("\x1b[2J\x1b[H", end="")
-			return view[selected]
-		if key == "shift_enter":
-			if not view:
-				continue
-			open_in_tab_cb(view[selected])
-			continue
-		if key == "favorite":
-			if not view:
-				continue
-			target = view[selected].session_id
-			if target in favorites:
-				favorites.remove(target)
-			else:
-				favorites.add(target)
-			save_favorites(favorites_file, favorites)
-			current_id = target
-			view = apply_filter_and_sort(entries, query, favorites)
-			selected = next((i for i, e in enumerate(view) if e.session_id == current_id), 0)
-			top = 0
-		elif key == "backspace":
-			if query:
-				query = query[:-1]
-				view = apply_filter_and_sort(entries, query, favorites)
+	sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
+	sys.stdout.flush()
+	try:
+		while True:
+			max_rows, _, top, _ = render_menu(
+				view, selected, top, query, favorites, show_unnamed
+			)
+			key = get_key()
+			if key in ("quit", "esc"):
+				return None
+			if key == "toggle_unnamed":
+				show_unnamed = not show_unnamed
+				view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
 				selected = 0
 				top = 0
-		elif key.startswith("char:"):
-			query += key[5:]
-			view = apply_filter_and_sort(entries, query, favorites)
-			selected = 0
-			top = 0
+				continue
+			if key == "new_chat_tab":
+				base_entry = view[selected] if view else None
+				open_new_chat_tab_cb(base_entry)
+				continue
+			if key == "open_all_favorites":
+				open_all_favorites_cb(all_entries, favorites)
+				continue
+			if key == "new_chat_current":
+				base_entry = view[selected] if view else None
+				return PickerResult(action="new_chat_current", entry=base_entry)
+			if key == "refresh":
+				current_id = view[selected].session_id if view else ""
+				all_entries = refresh_entries_cb()
+				view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
+				if view:
+					selected = next(
+						(i for i, e in enumerate(view) if e.session_id == current_id), 0
+					)
+					rows, entry_to_row = build_display_rows(view)
+					selected_row = entry_to_row[selected]
+					if selected_row < top:
+						top = selected_row
+					elif selected_row >= top + max_rows:
+						top = max(0, selected_row - max_rows + 1)
+					top = min(top, max(0, len(rows) - max_rows))
+				else:
+					selected = 0
+					top = 0
+				continue
+			if key == "enter":
+				if not view:
+					continue
+				return PickerResult(action="resume", entry=view[selected])
+			if key == "shift_enter":
+				if not view:
+					continue
+				open_in_tab_cb(view[selected])
+				current_id = view[selected].session_id
+				all_entries = refresh_entries_cb()
+				view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
+				selected = (
+					next((i for i, e in enumerate(view) if e.session_id == current_id), 0)
+					if view
+					else 0
+				)
+				top = 0
+				continue
+			if key == "favorite":
+				if not view:
+					continue
+				target = view[selected].session_id
+				if target in favorites:
+					favorites.remove(target)
+				else:
+					favorites.add(target)
+				save_favorites(favorites_file, favorites)
+				current_id = target
+				view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
+				selected = next((i for i, e in enumerate(view) if e.session_id == current_id), 0)
+				top = 0
+			elif key == "backspace":
+				if query:
+					query = query[:-1]
+					view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
+					selected = 0
+					top = 0
+			elif key.startswith("char:"):
+				query += key[5:]
+				view = apply_filter_and_sort(all_entries, query, favorites, show_unnamed)
+				selected = 0
+				top = 0
 
-		if not view:
-			continue
+			if not view:
+				continue
 
-		if key == "up":
-			selected = max(0, selected - 1)
-		elif key == "down":
-			selected = min(len(view) - 1, selected + 1)
-		elif key == "home":
-			selected = 0
-		elif key == "end":
-			selected = len(view) - 1
-		elif key == "pageup":
-			selected = max(0, selected - max_rows)
-		elif key == "pagedown":
-			selected = min(len(view) - 1, selected + max_rows)
+			if key == "up":
+				selected = max(0, selected - 1)
+			elif key == "down":
+				selected = min(len(view) - 1, selected + 1)
+			elif key == "home":
+				selected = 0
+			elif key == "end":
+				selected = len(view) - 1
+			elif key == "pageup":
+				selected = max(0, selected - max_rows)
+			elif key == "pagedown":
+				selected = min(len(view) - 1, selected + max_rows)
 
-		if selected < top:
-			top = selected
-		elif selected >= top + max_rows:
-			top = selected - max_rows + 1
+			rows, entry_to_row = build_display_rows(view)
+			selected_row = entry_to_row[selected]
+			if selected_row < top:
+				top = selected_row
+			elif selected_row >= top + max_rows:
+				top = selected_row - max_rows + 1
+			top = min(top, max(0, len(rows) - max_rows))
+	finally:
+		sys.stdout.write("\x1b[?1049l")
+		sys.stdout.flush()
 
 
 def set_terminal_title(title: str) -> None:
@@ -406,6 +603,30 @@ def set_terminal_title(title: str) -> None:
 			pass
 	# OSC title sequence helps on terminals that support it.
 	print(f"\x1b]0;{title}\x07", end="", flush=True)
+
+
+def run_with_spinner(label: str, fn, *args, **kwargs):
+	if not sys.stdout.isatty():
+		return fn(*args, **kwargs)
+
+	stop = threading.Event()
+
+	def spin():
+		i = 0
+		while not stop.is_set():
+			frame = SPINNER_FRAMES[i % len(SPINNER_FRAMES)]
+			print(f"\r{ORANGE}{frame}{RESET} {GRAY}{label}...{RESET}", end="", flush=True)
+			time.sleep(0.08)
+			i += 1
+		print("\r" + (" " * (len(label) + 8)) + "\r", end="", flush=True)
+
+	t = threading.Thread(target=spin, daemon=True)
+	t.start()
+	try:
+		return fn(*args, **kwargs)
+	finally:
+		stop.set()
+		t.join(timeout=0.2)
 
 
 def resolve_codex_executable() -> str | None:
@@ -430,6 +651,8 @@ def make_resume_ps_command(entry: SessionEntry, codex_exe: str, run_cwd: str) ->
 		f"$title = '{ps_title}'; "
 		f"$exe = '{ps_exe}'; "
 		f"$cwd = '{ps_cwd}'; "
+		"try { [Console]::Write(\"`e[3J`e[2J`e[H\") } catch {}; "
+		"Clear-Host; "
 		"$Host.UI.RawUI.WindowTitle = $title; "
 		"Set-Location -LiteralPath $cwd; "
 		"$p = Start-Process -FilePath $exe -ArgumentList @('resume', "
@@ -443,7 +666,58 @@ def make_resume_ps_command(entry: SessionEntry, codex_exe: str, run_cwd: str) ->
 	)
 
 
-def open_session_in_tab(entry: SessionEntry) -> bool:
+def make_new_chat_ps_command(codex_exe: str, run_cwd: str, title: str) -> str:
+	ps_title = title.replace("'", "''")
+	ps_exe = codex_exe.replace("'", "''")
+	ps_cwd = str(run_cwd).replace("'", "''")
+	ps_extra = ", ".join(f"'{arg}'" for arg in RESUME_EXTRA_ARGS)
+	return (
+		"$ErrorActionPreference = 'SilentlyContinue'; "
+		f"$title = '{ps_title}'; "
+		f"$exe = '{ps_exe}'; "
+		f"$cwd = '{ps_cwd}'; "
+		"try { [Console]::Write(\"`e[3J`e[2J`e[H\") } catch {}; "
+		"Clear-Host; "
+		"$Host.UI.RawUI.WindowTitle = $title; "
+		"Set-Location -LiteralPath $cwd; "
+		f"$argsList=@({ps_extra}); "
+		"& $exe @argsList"
+	)
+
+
+def launch_ps_in_current_window(ps_command: str, run_cwd: str) -> int:
+	script_body = ps_command.replace("; ", ";\n")
+	temp_path = None
+	try:
+		with tempfile.NamedTemporaryFile(
+			mode="w",
+			suffix=".ps1",
+			prefix="codex_run_",
+			delete=False,
+			encoding="utf-8",
+		) as tmp:
+			tmp.write(script_body)
+			temp_path = tmp.name
+		return subprocess.call(
+			[
+				"powershell",
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				temp_path,
+			],
+			cwd=run_cwd,
+		)
+	finally:
+		if temp_path:
+			try:
+				os.remove(temp_path)
+			except OSError:
+				pass
+
+
+def open_ps_in_new_tab(ps_command: str, title: str, run_cwd: str) -> bool:
 	if os.name != "nt":
 		print("Opening tabs is only supported on Windows Terminal.")
 		return False
@@ -451,40 +725,63 @@ def open_session_in_tab(entry: SessionEntry) -> bool:
 	if not wt_exe:
 		print("Windows Terminal (`wt`) not found; cannot open a new tab.")
 		return False
+	encoded_cmd = base64.b64encode(ps_command.encode("utf-16le")).decode("ascii")
+	try:
+		cmd = [
+			wt_exe,
+			"-w",
+			"0",
+			"new-tab",
+			"--title",
+			title,
+			"--tabColor",
+			"#F28C28",
+			"-d",
+			run_cwd,
+			"powershell",
+			"-NoExit",
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-EncodedCommand",
+			encoded_cmd,
+		]
+		subprocess.Popen(cmd)
+		return True
+	except Exception as exc:
+		print(f"Failed to open tab: {exc}")
+		return False
+
+
+def open_session_in_tab(entry: SessionEntry) -> bool:
 	codex_exe = resolve_codex_executable()
 	if not codex_exe:
 		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
 		return False
 	run_cwd = entry.cwd if entry.cwd and Path(entry.cwd).exists() else os.getcwd()
 	ps_cmd = make_resume_ps_command(entry, codex_exe, run_cwd)
-	encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
 	title = entry.thread_name
-	try:
-		subprocess.Popen(
-			[
-				wt_exe,
-				"-w",
-				"0",
-				"new-tab",
-				"--title",
-				title,
-				"--tabColor",
-				"#F28C28",
-				"-d",
-				run_cwd,
-				"powershell",
-				"-NoExit",
-				"-NoProfile",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-EncodedCommand",
-				encoded_cmd,
-			]
-		)
-		return True
-	except Exception as exc:
-		print(f"Failed to open tab: {exc}")
+	return open_ps_in_new_tab(ps_cmd, title, run_cwd)
+
+
+def open_new_chat_tab(base_entry: SessionEntry | None) -> bool:
+	codex_exe = resolve_codex_executable()
+	if not codex_exe:
+		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
 		return False
+	run_cwd = (
+		base_entry.cwd
+		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
+		else os.getcwd()
+	)
+	ps_cmd = make_new_chat_ps_command(codex_exe, run_cwd, "Codex New Chat")
+	return open_ps_in_new_tab(ps_cmd, "Codex New Chat", run_cwd)
+
+
+def open_all_favorites(entries: list[SessionEntry], favorites: set[str]) -> None:
+	fav_entries = [e for e in entries if e.session_id in favorites]
+	for entry in fav_entries:
+		open_session_in_tab(entry)
 
 
 def launch_resume(entry: SessionEntry) -> int:
@@ -498,6 +795,9 @@ def launch_resume(entry: SessionEntry) -> int:
 		print("Selected session has no usable cwd; running from current folder.")
 		run_cwd = os.getcwd()
 
+	# Ensure picker/menu output and scrollback are removed before launching in current window.
+	print(FULL_CLEAR, end="")
+	sys.stdout.flush()
 	set_terminal_title(entry.thread_name)
 	print(
 		f"Launching: {codex_exe} resume {entry.session_id} "
@@ -506,39 +806,34 @@ def launch_resume(entry: SessionEntry) -> int:
 	print(f"Folder: {run_cwd}")
 
 	if os.name == "nt":
-		script_body = make_resume_ps_command(entry, codex_exe, run_cwd).replace("; ", ";\n")
-		temp_path = None
-		try:
-			with tempfile.NamedTemporaryFile(
-				mode="w",
-				suffix=".ps1",
-				prefix="codex_resume_",
-				delete=False,
-				encoding="utf-8",
-			) as tmp:
-				tmp.write(script_body)
-				temp_path = tmp.name
-			return subprocess.call(
-				[
-					"powershell",
-					"-NoProfile",
-					"-ExecutionPolicy",
-					"Bypass",
-					"-File",
-					temp_path,
-				],
-				cwd=run_cwd,
-			)
-		finally:
-			if temp_path:
-				try:
-					os.remove(temp_path)
-				except OSError:
-					pass
+		ps_cmd = make_resume_ps_command(entry, codex_exe, run_cwd)
+		return launch_ps_in_current_window(ps_cmd, run_cwd)
 
 	return subprocess.call(
 		[codex_exe, "resume", entry.session_id, *RESUME_EXTRA_ARGS], cwd=run_cwd
 	)
+
+
+def launch_new_chat_current(base_entry: SessionEntry | None) -> int:
+	codex_exe = resolve_codex_executable()
+	if not codex_exe:
+		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
+		return 1
+	run_cwd = (
+		base_entry.cwd
+		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
+		else os.getcwd()
+	)
+	# Ensure picker/menu output and scrollback are removed before launching in current window.
+	print(FULL_CLEAR, end="")
+	sys.stdout.flush()
+	set_terminal_title("Codex New Chat")
+	print(f"Launching: {codex_exe} {' '.join(RESUME_EXTRA_ARGS)}")
+	print(f"Folder: {run_cwd}")
+	if os.name == "nt":
+		ps_cmd = make_new_chat_ps_command(codex_exe, run_cwd, "Codex New Chat")
+		return launch_ps_in_current_window(ps_cmd, run_cwd)
+	return subprocess.call([codex_exe, *RESUME_EXTRA_ARGS], cwd=run_cwd)
 
 
 def print_list(
@@ -547,7 +842,7 @@ def print_list(
 	show_cwd: bool,
 	favorites: set[str],
 ) -> None:
-	ordered = apply_filter_and_sort(entries, "", favorites)
+	ordered = apply_filter_and_sort(entries, "", favorites, show_unnamed=True)
 	for entry in ordered:
 		prefix = "* " if entry.session_id in favorites else "  "
 		parts = [
@@ -562,6 +857,48 @@ def print_list(
 			parts.append(entry.cwd or "(cwd unknown)")
 		print("\t".join(parts))
 	print(f"\nTotal sessions: {len(ordered)}")
+
+
+def build_entries(codex_home: Path, name_filter: str) -> list[SessionEntry]:
+	index_file = codex_home / "session_index.jsonl"
+	sessions_root = codex_home / "sessions"
+	entries = load_index(index_file)
+	named_by_id = {e.session_id: e for e in entries}
+	details_by_id = load_session_details_by_id(sessions_root)
+	for entry in entries:
+		cwd, model, last_ts, created_ts, first_user_preview = details_by_id.get(
+			entry.session_id, ("", "", "", "", "")
+		)
+		entry.cwd = cwd
+		entry.model = model
+		if last_ts:
+			entry.updated_at = last_ts
+		if created_ts:
+			entry.created_at = created_ts
+		# If thread name looks auto-generated from first user line, classify as unnamed.
+		if first_user_preview and normalize_title(entry.thread_name) == normalize_title(first_user_preview):
+			entry.is_named = False
+
+	for sid, (cwd, model, last_ts, created_ts, first_user_preview) in details_by_id.items():
+		if sid in named_by_id:
+			continue
+		title = first_user_preview if first_user_preview else "(unnamed session)"
+		entries.append(
+			SessionEntry(
+				session_id=sid,
+				thread_name=title,
+				updated_at=last_ts or created_ts,
+				created_at=created_ts,
+				cwd=cwd,
+				model=model,
+				is_named=False,
+			)
+		)
+
+	entries = sorted(entries, key=lambda e: (e.updated_at, e.thread_name), reverse=True)
+	if name_filter:
+		entries = [e for e in entries if name_filter in e.thread_name.lower()]
+	return entries
 
 
 def main() -> int:
@@ -606,27 +943,16 @@ def main() -> int:
 
 	codex_home = args.codex_home.expanduser()
 	index_file = codex_home / "session_index.jsonl"
-	sessions_root = codex_home / "sessions"
 	favorites_file = codex_home / "session_favorites.json"
 
 	if not index_file.exists():
 		print(f"Session index not found: {index_file}")
 		return 1
 
-	entries = load_index(index_file)
-	details_by_id = load_session_details_by_id(sessions_root)
-	for entry in entries:
-		cwd, model, last_ts, created_ts = details_by_id.get(entry.session_id, ("", "", "", ""))
-		entry.cwd = cwd
-		entry.model = model
-		if last_ts:
-			entry.updated_at = last_ts
-		if created_ts:
-			entry.created_at = created_ts
-
 	initial_filter = args.name.lower().strip()
-	if initial_filter:
-		entries = [e for e in entries if initial_filter in e.thread_name.lower()]
+	entries = run_with_spinner(
+		"Parsing sessions", build_entries, codex_home, initial_filter
+	)
 
 	if not entries:
 		print("No sessions matched.")
@@ -650,11 +976,28 @@ def main() -> int:
 		print_list(entries, args.show_id, args.show_cwd, favorites)
 		return 0
 
-	selection = interactive_pick(entries, favorites_file, open_session_in_tab)
+	def refresh_entries() -> list[SessionEntry]:
+		return run_with_spinner(
+			"Refreshing sessions", build_entries, codex_home, initial_filter
+		)
+
+	selection = interactive_pick(
+		entries,
+		favorites_file,
+		open_session_in_tab,
+		open_new_chat_tab,
+		open_all_favorites,
+		refresh_entries,
+	)
 	if selection is None:
 		print("Cancelled.")
 		return 0
-	return launch_resume(selection)
+	if selection.action == "resume" and selection.entry is not None:
+		return launch_resume(selection.entry)
+	if selection.action == "new_chat_current":
+		return launch_new_chat_current(selection.entry)
+	print("No action selected.")
+	return 0
 
 
 if __name__ == "__main__":
