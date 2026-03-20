@@ -8,6 +8,7 @@ Interactive terminal picker for Codex sessions with:
 - Arrow-key navigation
 - Live type-to-filter
 - Favorites (pin/unpin) with persistence
+- Optional unnamed-session view toggle
 - Resume selected session in its original folder
 - Open selected/favorite sessions in new Windows Terminal tabs
 - Chat title and tab color support
@@ -15,7 +16,8 @@ Interactive terminal picker for Codex sessions with:
 ## Important Behavior
 
 - This is a front end for `codex resume`.
-- It only shows sessions that have an explicit thread name in Codex's session index (for example, sessions named via `/rename`).
+- Named sessions are shown by default.
+- Unnamed sessions can be included in the picker with `Alt+a`.
 
 ## Files
 
@@ -76,13 +78,19 @@ codex-fe --list
 
 ## Picker Controls
 
+- Action shortcuts use `Alt+...` so normal typing is reserved for the filter.
 - `Up/Down`, `PageUp/PageDown`, `Home/End` navigate
 - `Enter` resume in current tab
 - `Shift+Enter` open selected session in a new Windows Terminal tab
 - Type to filter
 - `Backspace` remove filter text
+- `Alt+a` toggle unnamed session visibility
+- `Alt+r` refresh sessions
+- `Alt+n` start a new chat in the current tab
+- `Alt+N` start a new chat in a new tab
+- `Alt+Shift+O` open all favorites in new tabs
 - `Ctrl+F` or `*` toggle favorite
-- `q` quit
+- `Alt+q` quit
 
 ## Notes
 
