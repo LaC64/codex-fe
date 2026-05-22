@@ -9,9 +9,10 @@ Interactive terminal picker for Codex sessions with:
 - Live type-to-filter
 - Favorites (pin/unpin) with persistence
 - Optional unnamed-session view toggle
-- Resume selected session in its original folder
+- Resume selected session in its last-used folder
 - Open selected/favorite sessions in new Windows Terminal tabs
 - Chat title and tab color support
+- Cached session metadata for fast startup
 
 ## Important Behavior
 
@@ -89,12 +90,14 @@ codex-fe --list
 - `Alt+n` start a new chat in the current tab
 - `Alt+N` start a new chat in a new tab
 - `Alt+Shift+O` open all favorites in new tabs
+- `Ctrl+P` copy the selected conversation JSONL file path
 - `Ctrl+F` or `*` toggle favorite
 - `Alt+q` quit
 
 ## Notes
 
 - Favorites are stored in `~/.codex/session_favorites.json`.
+- Cached session metadata is stored in `~/.codex/codex-fe-session-details-cache.json`.
 - Sessions are resumed by `session_id` for reliability.
 - Resume launches use:
   - `--dangerously-bypass-approvals-and-sandbox`
