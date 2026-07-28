@@ -26,3 +26,4 @@
 
 - Made `Ctrl+C` copy selected host-terminal text instead of forwarding an interrupt to Codex.
 - Preserved normal PowerShell interrupt behavior when no terminal text is selected.
+- Added `Ctrl+V` clipboard paste through xterm so hosted terminals match normal PowerShell terminal behavior.

@@ -435,6 +435,7 @@ ipcMain.handle("clipboard:write-text", (_event, text) => {
 	clipboard.writeText(String(text || ""));
 	return true;
 });
+ipcMain.handle("clipboard:read-text", () => clipboard.readText());
 
 const hasInstanceLock = app.requestSingleInstanceLock();
 if (!hasInstanceLock) {
