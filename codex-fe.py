@@ -1680,11 +1680,14 @@ def make_dashboard_ps_command(codex_home: Path, initial_filter: str) -> str:
 	ps_python = sys.executable.replace("'", "''")
 	ps_script = str(Path(__file__).resolve()).replace("'", "''")
 	ps_home = str(codex_home).replace("'", "''")
-	ps_filter = initial_filter.replace("'", "''")
+	filter_arg = ""
+	if initial_filter:
+		ps_filter = initial_filter.replace("'", "''")
+		filter_arg = f" --name '{ps_filter}'"
 	return (
 		"$ErrorActionPreference = 'Stop'; "
 		f"$Host.UI.RawUI.WindowTitle = '{ps_title}'; "
-		f"& '{ps_python}' '{ps_script}' --dashboard --codex-home '{ps_home}' --name '{ps_filter}'; "
+		f"& '{ps_python}' '{ps_script}' --dashboard --codex-home '{ps_home}'{filter_arg}; "
 		"exit $LASTEXITCODE"
 	)
 
