@@ -12,3 +12,4 @@
 
 - Added an isolated Electron proof of concept using xterm.js and node-pty/ConPTY.
 - Hosted a real interactive PowerShell terminal inside a Chromium window to validate the future managed-tab architecture.
+- Corrected the renderer's xterm asset paths so the terminal frontend initializes and connects to ConPTY.
