@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import atexit
-import base64
 import ctypes
 import datetime as dt
 import json
@@ -12,10 +10,10 @@ import select
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import uuid
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,20 +22,13 @@ ORANGE = "\x1b[38;2;242;140;40m"  # #F28C28
 GRAY = "\x1b[38;2;153;153;153m"   # medium gray
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
-FULL_CLEAR = "\x1b[3J\x1b[2J\x1b[H"
-RESUME_EXTRA_ARGS = [
-	"--dangerously-bypass-approvals-and-sandbox",
-]
 SPINNER_FRAMES = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
 UNNAMED_PREVIEW_CHARS = 360
 SESSION_DETAILS_CACHE_VERSION = 1
 SESSION_DETAILS_HEAD_BYTES = 1024 * 1024
 SESSION_DETAILS_TAIL_BYTES = 8 * 1024 * 1024
-WORKSPACE_VERSION = 2
-WORKSPACE_WINDOW_NAME = "codex-fe"
-WORKSPACE_TAB_COLOR = "#F28C28"
-WORKSPACE_PENDING_RESOLVE_SECONDS = 30
-WORKSPACE_DASHBOARD_TITLE = "Codex-FE Dashboard"
+HOST_START_TIMEOUT_SECONDS = 15
+HOST_REQUEST_TIMEOUT_SECONDS = 2
 ASCII_ART_LINES = [
 	"  .____________________________________________________________________________.",
 	" /                                                                            /|",
@@ -87,21 +78,6 @@ class SessionDetailsState:
 	last_ts: str = ""
 	created_ts: str = ""
 	first_user_preview: str = ""
-
-
-@dataclass
-class WorkspaceTab:
-	kind: str
-	session_id: str
-	title: str
-	cwd: str
-	model: str
-	session_file: str
-	added_at: str
-	last_launched_at: str
-	launch_id: str = ""
-	launched_at: str = ""
-	resolve_attempts: int = 0
 
 
 def clean_text(value: str) -> str:
@@ -553,447 +529,6 @@ def copy_selected_session_file_path(entry: SessionEntry) -> None:
 		input("Press Enter to return to picker...")
 
 
-def utc_now_iso() -> str:
-	return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def normalize_path_text(value: str) -> str:
-	return os.path.normcase(os.path.abspath(value)) if value else ""
-
-
-def workspace_file_for(codex_home: Path) -> Path:
-	return codex_home / "codex-fe-workspace.json"
-
-
-def dashboard_state_file_for(codex_home: Path) -> Path:
-	return codex_home / "codex-fe-dashboard.json"
-
-
-def read_json_object(path: Path) -> dict[str, Any] | None:
-	try:
-		obj = json.loads(path.read_text(encoding="utf-8"))
-	except Exception:
-		return None
-	return obj if isinstance(obj, dict) else None
-
-
-def workspace_tab_from_obj(obj: Any) -> WorkspaceTab | None:
-	if not isinstance(obj, dict):
-		return None
-	kind = str(obj.get("kind", "")).strip()
-	if kind not in ("session", "pending_new_chat"):
-		return None
-	try:
-		resolve_attempts = int(obj.get("resolve_attempts", 0) or 0)
-	except (TypeError, ValueError):
-		resolve_attempts = 0
-	return WorkspaceTab(
-		kind=kind,
-		session_id=str(obj.get("session_id", "")).strip(),
-		title=str(obj.get("title", "")).strip() or "Codex Session",
-		cwd=str(obj.get("cwd", "")).strip(),
-		model=str(obj.get("model", "")).strip(),
-		session_file=str(obj.get("session_file", "")).strip(),
-		added_at=str(obj.get("added_at", "")).strip(),
-		last_launched_at=str(obj.get("last_launched_at", "")).strip(),
-		launch_id=str(obj.get("launch_id", "")).strip(),
-		launched_at=str(obj.get("launched_at", "")).strip(),
-		resolve_attempts=resolve_attempts,
-	)
-
-
-def workspace_tab_to_obj(tab: WorkspaceTab) -> dict[str, Any]:
-	obj: dict[str, Any] = {
-		"kind": tab.kind,
-		"title": tab.title,
-		"cwd": tab.cwd,
-		"model": tab.model,
-		"session_file": tab.session_file,
-		"added_at": tab.added_at,
-		"last_launched_at": tab.last_launched_at,
-	}
-	if tab.kind == "session":
-		obj["session_id"] = tab.session_id
-	else:
-		obj["launch_id"] = tab.launch_id
-		obj["launched_at"] = tab.launched_at
-		obj["resolve_attempts"] = tab.resolve_attempts
-	return obj
-
-
-def load_workspace(path: Path) -> list[WorkspaceTab]:
-	if not path.exists():
-		return []
-	obj = read_json_object(path)
-	if obj is None or obj.get("version") not in (1, WORKSPACE_VERSION):
-		return []
-	tabs = obj.get("tabs", [])
-	if not isinstance(tabs, list):
-		return []
-	return [tab for tab in (workspace_tab_from_obj(item) for item in tabs) if tab is not None]
-
-
-def archived_legacy_tabs(path: Path) -> list[Any]:
-	obj = read_json_object(path)
-	if obj is None:
-		return []
-	tabs = obj.get("archived_legacy_tabs", [])
-	return tabs if isinstance(tabs, list) else []
-
-
-def save_workspace(path: Path, tabs: list[WorkspaceTab]) -> None:
-	payload = {
-		"version": WORKSPACE_VERSION,
-		"window_name": WORKSPACE_WINDOW_NAME,
-		"updated_at": utc_now_iso(),
-		"tabs": [workspace_tab_to_obj(tab) for tab in tabs],
-	}
-	legacy_tabs = archived_legacy_tabs(path)
-	if legacy_tabs:
-		payload["archived_legacy_tabs"] = legacy_tabs
-	path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def migrate_workspace(codex_home: Path) -> None:
-	"""Archive v1 history because it did not represent one live tab workspace."""
-	path = workspace_file_for(codex_home)
-	obj = read_json_object(path)
-	if obj is None or obj.get("version") != 1:
-		return
-	legacy_tabs = obj.get("tabs", [])
-	payload = {
-		"version": WORKSPACE_VERSION,
-		"window_name": WORKSPACE_WINDOW_NAME,
-		"updated_at": utc_now_iso(),
-		"tabs": [],
-		"archived_legacy_tabs": legacy_tabs if isinstance(legacy_tabs, list) else [],
-	}
-	path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-	print(
-		f"Archived {len(payload['archived_legacy_tabs'])} legacy workspace record(s); "
-		"the new automatic workspace starts empty."
-	)
-
-
-def remove_workspace_session(codex_home: Path, session_id: str) -> bool:
-	"""Remove one explicitly managed session so it is not restored next launch."""
-	if not session_id:
-		return False
-	path = workspace_file_for(codex_home)
-	tabs = load_workspace(path)
-	remaining = [
-		tab
-		for tab in tabs
-		if not (tab.kind == "session" and tab.session_id == session_id)
-	]
-	if len(remaining) == len(tabs):
-		return False
-	save_workspace(path, remaining)
-	return True
-
-
-def dashboard_is_active(codex_home: Path) -> bool:
-	"""Return whether the persistent dashboard process from this workspace still runs."""
-	path = dashboard_state_file_for(codex_home)
-	obj = read_json_object(path)
-	if obj is None:
-		return False
-	try:
-		pid = int(obj.get("pid", 0))
-		if pid <= 0:
-			raise ValueError
-		os.kill(pid, 0)
-		return True
-	except (OSError, TypeError, ValueError):
-		try:
-			path.unlink()
-		except OSError:
-			pass
-		return False
-
-
-def claim_dashboard(codex_home: Path) -> bool:
-	"""Claim the one dashboard process slot for the named terminal workspace."""
-	if dashboard_is_active(codex_home):
-		return False
-	path = dashboard_state_file_for(codex_home)
-	path.write_text(
-		json.dumps({"pid": os.getpid(), "started_at": utc_now_iso()}, indent=2),
-		encoding="utf-8",
-	)
-
-	def release_dashboard() -> None:
-		obj = read_json_object(path)
-		if obj is not None and obj.get("pid") == os.getpid():
-			try:
-				path.unlink()
-			except OSError:
-				pass
-
-	atexit.register(release_dashboard)
-	return True
-
-
-def workspace_tab_from_entry(entry: SessionEntry, run_cwd: str) -> WorkspaceTab:
-	now = utc_now_iso()
-	return WorkspaceTab(
-		kind="session",
-		session_id=entry.session_id,
-		title=entry.thread_name,
-		cwd=run_cwd,
-		model=entry.model,
-		session_file=entry.session_file,
-		added_at=now,
-		last_launched_at=now,
-	)
-
-
-def record_workspace_session(codex_home: Path, entry: SessionEntry, run_cwd: str) -> None:
-	path = workspace_file_for(codex_home)
-	tabs = load_workspace(path)
-	new_tab = workspace_tab_from_entry(entry, run_cwd)
-	replaced = False
-	for index, tab in enumerate(tabs):
-		if tab.kind == "session" and tab.session_id == entry.session_id:
-			new_tab.added_at = tab.added_at or new_tab.added_at
-			tabs[index] = new_tab
-			replaced = True
-			break
-	if not replaced:
-		tabs.append(new_tab)
-	save_workspace(path, tabs)
-
-
-def record_workspace_pending_new_chat(codex_home: Path, run_cwd: str) -> WorkspaceTab:
-	now = utc_now_iso()
-	tab = WorkspaceTab(
-		kind="pending_new_chat",
-		session_id="",
-		title="Codex New Chat",
-		cwd=run_cwd,
-		model="",
-		session_file="",
-		added_at=now,
-		last_launched_at=now,
-		launch_id=str(uuid.uuid4()),
-		launched_at=now,
-		resolve_attempts=0,
-	)
-	path = workspace_file_for(codex_home)
-	tabs = load_workspace(path)
-	tabs.append(tab)
-	save_workspace(path, tabs)
-	return tab
-
-
-def workspace_session_ids(tabs: list[WorkspaceTab]) -> set[str]:
-	return {tab.session_id for tab in tabs if tab.kind == "session" and tab.session_id}
-
-
-def resolve_pending_workspace_tabs(codex_home: Path, entries: list[SessionEntry]) -> list[WorkspaceTab]:
-	path = workspace_file_for(codex_home)
-	tabs = load_workspace(path)
-	if not tabs:
-		return []
-	entries_by_id = {entry.session_id: entry for entry in entries}
-	known_ids = workspace_session_ids(tabs)
-	changed = False
-	for index, tab in enumerate(tabs):
-		if tab.kind != "pending_new_chat":
-			continue
-		launched_at = parse_iso_utc(tab.launched_at)
-		tab.resolve_attempts += 1
-		candidates: list[SessionEntry] = []
-		for entry in entries:
-			if entry.session_id in known_ids:
-				continue
-			created_at = parse_iso_utc(entry.created_at)
-			updated_at = parse_iso_utc(entry.updated_at)
-			session_time = created_at or updated_at
-			if launched_at is not None and session_time is not None and session_time < launched_at:
-				continue
-			if normalize_path_text(entry.cwd) != normalize_path_text(tab.cwd):
-				continue
-			candidates.append(entry)
-		if len(candidates) == 1:
-			entry = candidates[0]
-			resolved = workspace_tab_from_entry(entry, tab.cwd)
-			resolved.added_at = tab.added_at
-			tabs[index] = resolved
-			known_ids.add(entry.session_id)
-			changed = True
-		else:
-			changed = True
-	if changed:
-		save_workspace(path, tabs)
-	return tabs
-
-
-def print_workspace_status(codex_home: Path, entries: list[SessionEntry]) -> None:
-	tabs = resolve_pending_workspace_tabs(codex_home, entries)
-	legacy_count = len(archived_legacy_tabs(workspace_file_for(codex_home)))
-	if not tabs and not legacy_count:
-		print("Workspace is empty.")
-		return
-	for tab in tabs:
-		if tab.kind == "session":
-			print(f"session\t{tab.title}\t{tab.session_id}\t{tab.cwd}")
-		else:
-			print(f"pending\t{tab.title}\t{tab.launch_id}\t{tab.cwd}")
-	print(f"\nTotal workspace tabs: {len(tabs)}")
-	if legacy_count:
-		print(f"Archived legacy records: {legacy_count} (not auto-restored)")
-
-
-def resolve_pending_workspace_tabs_for_duration(codex_home: Path, seconds: int) -> None:
-	deadline = time.time() + seconds
-	while time.time() < deadline:
-		try:
-			entries = build_entries(codex_home, "")
-			tabs = resolve_pending_workspace_tabs(codex_home, entries)
-			if not any(tab.kind == "pending_new_chat" for tab in tabs):
-				return
-		except Exception:
-			pass
-		time.sleep(1)
-
-
-def start_workspace_resolver(codex_home: Path) -> None:
-	threading.Thread(
-		target=resolve_pending_workspace_tabs_for_duration,
-		args=(codex_home, WORKSPACE_PENDING_RESOLVE_SECONDS),
-		daemon=True,
-	).start()
-
-
-def session_entry_from_workspace_tab(
-	tab: WorkspaceTab, entries_by_id: dict[str, SessionEntry]
-) -> SessionEntry | None:
-	if tab.kind != "session" or not tab.session_id:
-		return None
-	existing = entries_by_id.get(tab.session_id)
-	if existing is not None:
-		return existing
-	return SessionEntry(
-		session_id=tab.session_id,
-		thread_name=tab.title,
-		updated_at=tab.last_launched_at,
-		created_at=tab.added_at,
-		cwd=tab.cwd,
-		model=tab.model,
-		is_named=True,
-		session_file=tab.session_file,
-	)
-
-
-def restore_workspace_tabs(
-	codex_home: Path, entries: list[SessionEntry], selected_ids: set[str] | None = None
-) -> tuple[int, int, int]:
-	tabs = resolve_pending_workspace_tabs(codex_home, entries)
-	entries_by_id = {entry.session_id: entry for entry in entries}
-	opened = 0
-	skipped_pending = 0
-	selected_total = 0
-	for tab in tabs:
-		if tab.kind != "session":
-			skipped_pending += 1
-			continue
-		if selected_ids is not None and tab.session_id not in selected_ids:
-			continue
-		selected_total += 1
-		entry = session_entry_from_workspace_tab(tab, entries_by_id)
-		if entry is not None and open_session_in_tab(entry, codex_home):
-			opened += 1
-	return opened, selected_total, skipped_pending
-
-
-def render_restore_picker(
-	tabs: list[WorkspaceTab], selected: int, checked: set[str]
-) -> None:
-	term_width = os.get_terminal_size().columns
-	lines: list[str] = [
-		f"{ORANGE}Codex-FE Workspace Restore{RESET}",
-		f"{GRAY}(Up/Down move, Space toggle, d delete, Enter restore checked, a all, n none, q quit){RESET}",
-		"",
-	]
-	name_w = max(24, min(54, term_width // 3))
-	cwd_w = max(20, term_width - name_w - 28)
-	for index, tab in enumerate(tabs):
-		marker = ">" if index == selected else " "
-		enabled = tab.kind == "session"
-		key = tab.session_id or tab.launch_id
-		check = "*" if key in checked and enabled else " "
-		kind = "session" if enabled else "pending"
-		title = truncate_text(tab.title, name_w)
-		cwd = truncate_text(tab.cwd or "(cwd unknown)", cwd_w)
-		color = ORANGE if index == selected else GRAY
-		lines.append(f"{color}{marker} [{check}] {kind.ljust(7)} {title.ljust(name_w)} {cwd}{RESET}")
-	sys.stdout.write("\x1b[2J\x1b[H" + "\n".join(lines))
-	sys.stdout.flush()
-
-
-def restore_picker(codex_home: Path, entries: list[SessionEntry]) -> int:
-	tabs = resolve_pending_workspace_tabs(codex_home, entries)
-	if not tabs:
-		print("Workspace is empty.")
-		return 0
-	selected = 0
-	checked = {tab.session_id for tab in tabs if tab.kind == "session" and tab.session_id}
-	sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
-	sys.stdout.flush()
-	try:
-		while True:
-			render_restore_picker(tabs, selected, checked)
-			key = get_key()
-			if key in ("quit", "esc", "char:q"):
-				return 0
-			if key == "up":
-				selected = max(0, selected - 1)
-			elif key == "down":
-				selected = min(len(tabs) - 1, selected + 1)
-			elif key == "home":
-				selected = 0
-			elif key == "end":
-				selected = len(tabs) - 1
-			elif key == "enter":
-				break
-			elif key == "space":
-				tab = tabs[selected]
-				if tab.kind == "session" and tab.session_id:
-					if tab.session_id in checked:
-						checked.remove(tab.session_id)
-					else:
-						checked.add(tab.session_id)
-			elif key == "char:a":
-				checked = {tab.session_id for tab in tabs if tab.kind == "session" and tab.session_id}
-			elif key == "char:n":
-				checked = set()
-			elif key == "char:d":
-				removed = tabs.pop(selected)
-				checked.discard(removed.session_id)
-				save_workspace(workspace_file_for(codex_home), tabs)
-				if not tabs:
-					return 0
-				selected = min(selected, len(tabs) - 1)
-	finally:
-		sys.stdout.write("\x1b[?1049l")
-		sys.stdout.flush()
-
-	opened, selected_total, skipped_pending = restore_workspace_tabs(codex_home, entries, checked)
-	print(f"Opened {opened}/{selected_total} saved workspace session(s).")
-	if skipped_pending:
-		print(f"Skipped {skipped_pending} pending new chat(s).")
-	return 0
-
-
-def clear_workspace(codex_home: Path) -> int:
-	path = workspace_file_for(codex_home)
-	if path.exists():
-		path.unlink()
-	print("Workspace cleared.")
-	return 0
-
-
 def truncate_text(value: str, width: int) -> str:
 	if width <= 1:
 		return value[:width]
@@ -1081,8 +616,6 @@ def get_key() -> str:
 				return "quit"
 			if ch.lower() == "a":
 				return "toggle_unnamed"
-			if ch.lower() == "d":
-				return "remove_workspace"
 			if ch.lower() == "s":
 				return "search_conversations"
 			if ch == "O":
@@ -1093,8 +626,6 @@ def get_key() -> str:
 				return "new_chat_current"
 			if ch.lower() == "r":
 				return "refresh"
-		if ch == " ":
-			return "space"
 		if ch == "*":
 			return "favorite"
 		if ch.isprintable() and ch not in ("\t",):
@@ -1136,8 +667,6 @@ def get_key() -> str:
 				return "quit"
 			if next_ch.lower() == "a":
 				return "toggle_unnamed"
-			if next_ch.lower() == "d":
-				return "remove_workspace"
 			if next_ch.lower() == "s":
 				return "search_conversations"
 			if next_ch == "O":
@@ -1153,8 +682,6 @@ def get_key() -> str:
 			return ""
 		if ch in ("\x08", "\x7f"):
 			return "backspace"
-		if ch == " ":
-			return "space"
 		if ch == "*":
 			return "favorite"
 		if ch.isprintable() and ch not in ("\t",):
@@ -1241,7 +768,6 @@ def render_menu(
 	conversation_query: str,
 	favorites: set[str],
 	show_unnamed: bool,
-	dashboard_mode: bool,
 ) -> tuple[int, int, int, int]:
 	term_width = os.get_terminal_size().columns
 	term_height = os.get_terminal_size().lines
@@ -1264,16 +790,10 @@ def render_menu(
 		color = ORANGE if i < 11 or i >= 17 else GRAY
 		lines.append(f"{color}{fit_banner_line(art_line, term_width)}{RESET}")
 
-	if dashboard_mode:
-		lines.append(
-			f"{ORANGE}Codex-FE Dashboard{RESET}  "
-			f"{GRAY}(Up/Down Enter open session tab, Alt+n new chat tab, Alt+d remove from workspace, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
-		)
-	else:
-		lines.append(
-			f"{ORANGE}Codex Resume Picker{RESET}  "
-			f"{GRAY}(Up/Down Enter select, Shift+Enter open session tab, Alt+n new chat here, Alt+N new chat tab, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open all favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
-		)
+	lines.append(
+		f"{ORANGE}Codex Resume Picker{RESET}  "
+		f"{GRAY}(Up/Down Enter open in host, Shift+Enter open and stay, Alt+n new chat and exit, Alt+N new chat and stay, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
+	)
 	unnamed_state = "ON" if show_unnamed else "OFF"
 	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}{RESET}")
 	lines.append(f"{ORANGE}Filter:{RESET} {GRAY}{query if query else '(none)'}{RESET}")
@@ -1371,9 +891,10 @@ def interactive_pick(
 	open_all_favorites_cb,
 	refresh_entries_cb,
 	search_conversations_cb,
-	remove_workspace_session_cb=None,
-	dashboard_mode: bool = False,
 ) -> PickerResult | None:
+	if not entries:
+		return None
+
 	favorites = load_favorites(favorites_file)
 	query = ""
 	conversation_query = ""
@@ -1418,7 +939,6 @@ def interactive_pick(
 				conversation_query,
 				favorites,
 				show_unnamed,
-				dashboard_mode,
 			)
 			key = get_key()
 			if key in ("quit", "esc"):
@@ -1461,19 +981,11 @@ def interactive_pick(
 				base_entry = view[selected] if view else None
 				open_new_chat_tab_cb(base_entry)
 				continue
-			if key == "remove_workspace":
-				if not view or remove_workspace_session_cb is None:
-					continue
-				run_outside_alt_screen(remove_workspace_session_cb, view[selected])
-				continue
 			if key == "open_all_favorites":
 				run_outside_alt_screen(open_all_favorites_cb, all_entries, favorites)
 				continue
 			if key == "new_chat_current":
 				base_entry = view[selected] if view else None
-				if dashboard_mode:
-					open_new_chat_tab_cb(base_entry)
-					continue
 				return PickerResult(action="new_chat_current", entry=base_entry)
 			if key == "refresh":
 				current_id = view[selected].session_id if view else ""
@@ -1500,9 +1012,6 @@ def interactive_pick(
 				continue
 			if key == "enter":
 				if not view:
-					continue
-				if dashboard_mode:
-					run_outside_alt_screen(open_in_tab_cb, view[selected])
 					continue
 				return PickerResult(action="resume", entry=view[selected])
 			if key == "shift_enter":
@@ -1582,18 +1091,6 @@ def interactive_pick(
 		sys.stdout.flush()
 
 
-def set_terminal_title(title: str) -> None:
-	if not title:
-		return
-	if os.name == "nt":
-		try:
-			ctypes.windll.kernel32.SetConsoleTitleW(title)
-		except Exception:
-			pass
-	# OSC title sequence helps on terminals that support it.
-	print(f"\x1b]0;{title}\x07", end="", flush=True)
-
-
 def run_with_spinner(label: str, fn, *args, **kwargs):
 	if not sys.stdout.isatty():
 		return fn(*args, **kwargs)
@@ -1618,285 +1115,179 @@ def run_with_spinner(label: str, fn, *args, **kwargs):
 		t.join(timeout=0.2)
 
 
-def resolve_codex_executable() -> str | None:
-	candidates = ["codex.cmd", "codex.CMD", "codex.bat", "codex.exe", "codex"]
-	for candidate in candidates:
-		resolved = shutil.which(candidate)
-		if resolved:
-			return resolved
-	local_shell = Path(__file__).resolve().parent / "codex_shell.cmd"
-	if local_shell.exists():
-		return str(local_shell)
-	return None
+class HostConnectionError(RuntimeError):
+	pass
 
 
-def make_resume_ps_command(entry: SessionEntry, codex_exe: str, run_cwd: str) -> str:
-	ps_title = entry.thread_name.replace("'", "''")
-	ps_exe = codex_exe.replace("'", "''")
-	ps_cwd = str(run_cwd).replace("'", "''")
-	ps_extra = ", ".join(f"'{arg}'" for arg in RESUME_EXTRA_ARGS)
-	return (
-		"$ErrorActionPreference = 'SilentlyContinue'; "
-		f"$title = '{ps_title}'; "
-		f"$exe = '{ps_exe}'; "
-		f"$cwd = '{ps_cwd}'; "
-		"try { [Console]::Write(\"`e[3J`e[2J`e[H\") } catch {}; "
-		"Clear-Host; "
-		"$Host.UI.RawUI.WindowTitle = $title; "
-		"Set-Location -LiteralPath $cwd; "
-		"$p = Start-Process -FilePath $exe -ArgumentList @('-C', $cwd, 'resume', "
-		f"'{entry.session_id}', {ps_extra}) -NoNewWindow -PassThru; "
-		"while (-not $p.HasExited) { "
-		"$Host.UI.RawUI.WindowTitle = $title; "
-		"Start-Sleep -Milliseconds 250; "
-		"$p.Refresh() "
-		"}; "
-		"exit $p.ExitCode"
-	)
+def host_discovery_file(codex_home: Path) -> Path:
+	return codex_home / "codex-fe-host.json"
 
 
-def make_new_chat_ps_command(codex_exe: str, run_cwd: str, title: str) -> str:
-	ps_title = title.replace("'", "''")
-	ps_exe = codex_exe.replace("'", "''")
-	ps_cwd = str(run_cwd).replace("'", "''")
-	ps_extra = ", ".join(f"'{arg}'" for arg in RESUME_EXTRA_ARGS)
-	return (
-		"$ErrorActionPreference = 'SilentlyContinue'; "
-		f"$title = '{ps_title}'; "
-		f"$exe = '{ps_exe}'; "
-		f"$cwd = '{ps_cwd}'; "
-		"try { [Console]::Write(\"`e[3J`e[2J`e[H\") } catch {}; "
-		"Clear-Host; "
-		"$Host.UI.RawUI.WindowTitle = $title; "
-		"Set-Location -LiteralPath $cwd; "
-		f"$argsList=@({ps_extra}); "
-		"& $exe @argsList"
-	)
-
-
-def make_dashboard_ps_command(codex_home: Path, initial_filter: str) -> str:
-	"""Build the PowerShell command that hosts the persistent dashboard tab."""
-	ps_title = WORKSPACE_DASHBOARD_TITLE.replace("'", "''")
-	ps_python = sys.executable.replace("'", "''")
-	ps_script = str(Path(__file__).resolve()).replace("'", "''")
-	ps_home = str(codex_home).replace("'", "''")
-	filter_arg = ""
-	if initial_filter:
-		ps_filter = initial_filter.replace("'", "''")
-		filter_arg = f" --name '{ps_filter}'"
-	return (
-		"$ErrorActionPreference = 'Stop'; "
-		f"$Host.UI.RawUI.WindowTitle = '{ps_title}'; "
-		f"& '{ps_python}' '{ps_script}' --dashboard --codex-home '{ps_home}'{filter_arg}; "
-		"exit $LASTEXITCODE"
-	)
-
-
-def launch_ps_in_current_window(ps_command: str, run_cwd: str) -> int:
-	script_body = ps_command.replace("; ", ";\n")
-	temp_path = None
+def load_host_discovery(codex_home: Path) -> dict[str, Any] | None:
 	try:
-		with tempfile.NamedTemporaryFile(
-			mode="w",
-			suffix=".ps1",
-			prefix="codex_run_",
-			delete=False,
-			encoding="utf-8",
-		) as tmp:
-			tmp.write(script_body)
-			temp_path = tmp.name
-		return subprocess.call(
-			[
-				"powershell",
-				"-NoProfile",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				temp_path,
-			],
-			cwd=run_cwd,
-		)
-	finally:
-		if temp_path:
-			try:
-				os.remove(temp_path)
-			except OSError:
-				pass
+		value = json.loads(host_discovery_file(codex_home).read_text(encoding="utf-8"))
+	except (OSError, json.JSONDecodeError):
+		return None
+	if not isinstance(value, dict):
+		return None
+	try:
+		port = int(value.get("port", 0))
+	except (TypeError, ValueError):
+		return None
+	token = str(value.get("token", "")).strip()
+	if port <= 0 or port > 65535 or not token:
+		return None
+	return {"port": port, "token": token, "pid": value.get("pid")}
 
 
-def open_ps_in_new_tab(
-	ps_command: str,
-	title: str,
-	run_cwd: str,
-	keep_open: bool = True,
-) -> bool:
+def request_host(
+	discovery: dict[str, Any],
+	method: str,
+	route: str,
+	payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+	body = json.dumps(payload).encode("utf-8") if payload is not None else None
+	request = urllib.request.Request(
+		f"http://127.0.0.1:{discovery['port']}{route}",
+		data=body,
+		method=method,
+		headers={
+			"Authorization": f"Bearer {discovery['token']}",
+			"Content-Type": "application/json",
+		},
+	)
+	try:
+		with urllib.request.urlopen(
+			request, timeout=HOST_REQUEST_TIMEOUT_SECONDS
+		) as response:
+			result = json.loads(response.read().decode("utf-8"))
+	except urllib.error.HTTPError as exc:
+		try:
+			error_result = json.loads(exc.read().decode("utf-8"))
+			message = str(error_result.get("error", exc.reason))
+		except (json.JSONDecodeError, AttributeError):
+			message = str(exc.reason)
+		raise HostConnectionError(message) from exc
+	except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+		raise HostConnectionError(str(exc)) from exc
+	if not isinstance(result, dict):
+		raise HostConnectionError("Host returned an invalid response.")
+	if not result.get("ok"):
+		raise HostConnectionError(str(result.get("error", "Host command failed.")))
+	return result
+
+
+def start_host(codex_home: Path) -> None:
+	host_dir = Path(__file__).resolve().parent / "codex-fe-host"
+	electron_exe = host_dir / "node_modules" / "electron" / "dist" / "electron.exe"
 	if os.name != "nt":
-		print("Opening tabs is only supported on Windows Terminal.")
-		return False
-	wt_exe = shutil.which("wt.exe") or shutil.which("wt")
-	if not wt_exe:
-		print("Windows Terminal (`wt`) not found; cannot open a new tab.")
-		return False
-	encoded_cmd = base64.b64encode(ps_command.encode("utf-16le")).decode("ascii")
+		raise HostConnectionError("Codex-FE Host currently requires Windows.")
+	if not electron_exe.exists():
+		raise HostConnectionError(
+			f"Electron runtime not installed. Run: {host_dir / 'start.cmd'}"
+		)
+	creation_flags = (
+		getattr(subprocess, "DETACHED_PROCESS", 0)
+		| getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+	)
 	try:
-		cmd = [
-			wt_exe,
-			"-w",
-			WORKSPACE_WINDOW_NAME,
-			"new-tab",
-			"--title",
-			title,
-			"--tabColor",
-			WORKSPACE_TAB_COLOR,
-			"-d",
-			run_cwd,
-			"powershell",
-			"-NoProfile",
-			"-ExecutionPolicy",
-			"Bypass",
-			"-EncodedCommand",
-			encoded_cmd,
-		]
-		if keep_open:
-			cmd.insert(-4, "-NoExit")
-		subprocess.Popen(cmd)
-		return True
-	except Exception as exc:
-		print(f"Failed to open tab: {exc}")
-		return False
-
-
-def focus_dashboard_window() -> bool:
-	"""Focus the first dashboard tab in the named Codex-FE terminal window."""
-	wt_exe = shutil.which("wt.exe") or shutil.which("wt")
-	if not wt_exe:
-		return False
-	try:
-		return subprocess.run(
-			[wt_exe, "-w", WORKSPACE_WINDOW_NAME, "focus-tab", "-t", "0"],
-			check=False,
+		subprocess.Popen(
+			[
+				str(electron_exe),
+				str(host_dir),
+				"--codex-home",
+				str(codex_home),
+			],
+			cwd=host_dir,
+			stdin=subprocess.DEVNULL,
 			stdout=subprocess.DEVNULL,
 			stderr=subprocess.DEVNULL,
-		).returncode == 0
-	except OSError:
+			close_fds=True,
+			creationflags=creation_flags,
+		)
+	except OSError as exc:
+		raise HostConnectionError(f"Could not start Codex-FE Host: {exc}") from exc
+
+
+def ensure_host(codex_home: Path) -> dict[str, Any]:
+	discovery = load_host_discovery(codex_home)
+	if discovery is not None:
+		try:
+			request_host(discovery, "GET", "/health")
+			return discovery
+		except HostConnectionError:
+			pass
+	start_host(codex_home)
+	deadline = time.time() + HOST_START_TIMEOUT_SECONDS
+	last_error = "Host did not publish connection information."
+	while time.time() < deadline:
+		discovery = load_host_discovery(codex_home)
+		if discovery is not None:
+			try:
+				request_host(discovery, "GET", "/health")
+				return discovery
+			except HostConnectionError as exc:
+				last_error = str(exc)
+		time.sleep(0.1)
+	raise HostConnectionError(f"Codex-FE Host did not become ready: {last_error}")
+
+
+def send_host_command(codex_home: Path, payload: dict[str, Any]) -> bool:
+	try:
+		discovery = ensure_host(codex_home)
+		request_host(discovery, "POST", "/commands", payload)
+		return True
+	except HostConnectionError as exc:
+		print(f"Could not open Codex-FE Host tab: {exc}")
 		return False
 
 
-def launch_dashboard_window(codex_home: Path, initial_filter: str) -> int:
-	"""Start or focus the one dashboard that owns the managed terminal workspace."""
-	if dashboard_is_active(codex_home):
-		if focus_dashboard_window():
-			return 0
-		print("Codex-FE dashboard is already active in the managed terminal window.")
-		return 1
-	ps_command = make_dashboard_ps_command(codex_home, initial_filter)
-	if open_ps_in_new_tab(ps_command, WORKSPACE_DASHBOARD_TITLE, os.getcwd(), False):
-		return 0
-	return 1
-
-
-def open_session_in_tab(entry: SessionEntry, codex_home: Path | None = None) -> bool:
-	codex_exe = resolve_codex_executable()
-	if not codex_exe:
-		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
-		return False
+def send_session_to_host(entry: SessionEntry, codex_home: Path) -> bool:
 	run_cwd = entry.cwd if entry.cwd and Path(entry.cwd).exists() else os.getcwd()
-	if codex_home is not None:
-		record_workspace_session(codex_home, entry, run_cwd)
-	ps_cmd = make_resume_ps_command(entry, codex_exe, run_cwd)
-	title = entry.thread_name
-	return open_ps_in_new_tab(ps_cmd, title, run_cwd)
+	return send_host_command(
+		codex_home,
+		{
+			"type": "open_session",
+			"session_id": entry.session_id,
+			"title": entry.thread_name,
+			"cwd": run_cwd,
+			"model": entry.model,
+		},
+	)
 
 
-def open_new_chat_tab(base_entry: SessionEntry | None, codex_home: Path | None = None) -> bool:
-	codex_exe = resolve_codex_executable()
-	if not codex_exe:
-		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
-		return False
+def send_new_chat_to_host(
+	base_entry: SessionEntry | None, codex_home: Path
+) -> bool:
 	run_cwd = (
 		base_entry.cwd
 		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
 		else os.getcwd()
 	)
-	if codex_home is not None:
-		record_workspace_pending_new_chat(codex_home, run_cwd)
-		start_workspace_resolver(codex_home)
-	ps_cmd = make_new_chat_ps_command(codex_exe, run_cwd, "Codex New Chat")
-	return open_ps_in_new_tab(ps_cmd, "Codex New Chat", run_cwd)
+	return send_host_command(
+		codex_home,
+		{
+			"type": "new_chat",
+			"title": "Codex New Chat",
+			"cwd": run_cwd,
+		},
+	)
 
 
 def open_all_favorites(
-	entries: list[SessionEntry], favorites: set[str], codex_home: Path | None = None
+	entries: list[SessionEntry],
+	favorites: set[str],
+	codex_home: Path,
 ) -> int:
-	fav_entries = [e for e in entries if e.session_id in favorites]
+	fav_entries = [entry for entry in entries if entry.session_id in favorites]
 	if not fav_entries:
 		print("No favorites to open.")
 		return 0
 	opened = 0
 	for entry in fav_entries:
-		if open_session_in_tab(entry, codex_home):
+		if send_session_to_host(entry, codex_home):
 			opened += 1
 	return opened
-
-
-def launch_resume(entry: SessionEntry, codex_home: Path | None = None) -> int:
-	codex_exe = resolve_codex_executable()
-	if not codex_exe:
-		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
-		return 1
-
-	run_cwd = entry.cwd if entry.cwd and Path(entry.cwd).exists() else None
-	if run_cwd is None:
-		print("Selected session has no usable cwd; running from current folder.")
-		run_cwd = os.getcwd()
-	if codex_home is not None:
-		record_workspace_session(codex_home, entry, run_cwd)
-
-	# Ensure picker/menu output and scrollback are removed before launching in current window.
-	print(FULL_CLEAR, end="")
-	sys.stdout.flush()
-	set_terminal_title(entry.thread_name)
-	print(
-		f"Launching: {codex_exe} -C {run_cwd} resume {entry.session_id} "
-		f"{' '.join(RESUME_EXTRA_ARGS)}"
-	)
-	print(f"Folder: {run_cwd}")
-
-	if os.name == "nt":
-		ps_cmd = make_resume_ps_command(entry, codex_exe, run_cwd)
-		return launch_ps_in_current_window(ps_cmd, run_cwd)
-
-	return subprocess.call(
-		[codex_exe, "-C", run_cwd, "resume", entry.session_id, *RESUME_EXTRA_ARGS],
-		cwd=run_cwd,
-	)
-
-
-def launch_new_chat_current(
-	base_entry: SessionEntry | None, codex_home: Path | None = None
-) -> int:
-	codex_exe = resolve_codex_executable()
-	if not codex_exe:
-		print("Could not find Codex launcher in PATH (`codex.cmd`/`codex.exe`).")
-		return 1
-	run_cwd = (
-		base_entry.cwd
-		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
-		else os.getcwd()
-	)
-	if codex_home is not None:
-		record_workspace_pending_new_chat(codex_home, run_cwd)
-		start_workspace_resolver(codex_home)
-	# Ensure picker/menu output and scrollback are removed before launching in current window.
-	print(FULL_CLEAR, end="")
-	sys.stdout.flush()
-	set_terminal_title("Codex New Chat")
-	print(f"Launching: {codex_exe} {' '.join(RESUME_EXTRA_ARGS)}")
-	print(f"Folder: {run_cwd}")
-	if os.name == "nt":
-		ps_cmd = make_new_chat_ps_command(codex_exe, run_cwd, "Codex New Chat")
-		return launch_ps_in_current_window(ps_cmd, run_cwd)
-	return subprocess.call([codex_exe, *RESUME_EXTRA_ARGS], cwd=run_cwd)
 
 
 def print_list(
@@ -1977,7 +1368,7 @@ def build_entries(codex_home: Path, name_filter: str) -> list[SessionEntry]:
 def main() -> int:
 	parser = argparse.ArgumentParser(
 		description=(
-			"Interactive Codex session picker: choose a thread and launch `codex resume`."
+			"Interactive Codex session picker for the managed Codex-FE terminal host."
 		)
 	)
 	parser.add_argument(
@@ -2010,51 +1401,13 @@ def main() -> int:
 	parser.add_argument(
 		"--open-favorites",
 		action="store_true",
-		help="Open all favorited sessions as new Windows Terminal tabs in the current window.",
-	)
-	parser.add_argument(
-		"--restore",
-		action="store_true",
-		help="Compatibility alias for opening the persistent Codex-FE dashboard.",
-	)
-	parser.add_argument(
-		"--restore-picker",
-		action="store_true",
-		help="Compatibility alias for opening the persistent Codex-FE dashboard.",
-	)
-	parser.add_argument(
-		"--dashboard",
-		action="store_true",
-		help=argparse.SUPPRESS,
-	)
-	parser.add_argument(
-		"--workspace-status",
-		action="store_true",
-		help="Print saved Codex-FE workspace sessions and pending new chats.",
-	)
-	parser.add_argument(
-		"--clear-workspace",
-		action="store_true",
-		help="Clear the saved Codex-FE workspace.",
+		help="Open all favorited sessions in Codex-FE Host tabs.",
 	)
 	args = parser.parse_args()
 
 	codex_home = args.codex_home.expanduser()
 	index_file = codex_home / "session_index.jsonl"
 	favorites_file = codex_home / "session_favorites.json"
-
-	if args.clear_workspace:
-		return clear_workspace(codex_home)
-
-	# Plain `codex-fe` is the workspace launcher. The internal dashboard process
-	# owns the automatic restore and remains available as the first terminal tab.
-	if (
-		not args.dashboard
-		and not args.list
-		and not args.open_favorites
-		and not args.workspace_status
-	):
-		return launch_dashboard_window(codex_home, args.name)
 
 	if not index_file.exists():
 		print(f"Session index not found: {index_file}")
@@ -2065,28 +1418,19 @@ def main() -> int:
 		"Parsing sessions", build_entries, codex_home, initial_filter
 	)
 
-	if not entries and not args.dashboard:
+	if not entries:
 		print("No sessions matched.")
 		return 1
 
 	favorites = load_favorites(favorites_file)
 
-	# Upgrade legacy state before any reconciliation can write the old history back.
-	if not args.list:
-		migrate_workspace(codex_home)
-	resolve_pending_workspace_tabs(codex_home, entries)
-
-	if args.workspace_status:
-		print_workspace_status(codex_home, entries)
-		return 0
-
 	if args.open_favorites:
 		fav_entries = [e for e in entries if e.session_id in favorites]
 		opened = open_all_favorites(entries, favorites, codex_home)
-		print(f"Opened {opened}/{len(fav_entries)} favorite sessions in new tab(s).")
+		print(f"Opened {opened}/{len(fav_entries)} favorite sessions in host tab(s).")
 		return 0
 
-	if args.list or (not args.dashboard and (not sys.stdout.isatty() or not sys.stdin.isatty())):
+	if args.list or not sys.stdout.isatty() or not sys.stdin.isatty():
 		print_list(entries, args.show_id, args.show_cwd, favorites)
 		return 0
 
@@ -2103,43 +1447,24 @@ def main() -> int:
 			query_text,
 		)
 
-	if args.dashboard:
-		if not claim_dashboard(codex_home):
-			print("Codex-FE dashboard is already active in the managed terminal window.")
-			return 0
-		set_terminal_title(WORKSPACE_DASHBOARD_TITLE)
-		opened, selected_total, skipped_pending = restore_workspace_tabs(codex_home, entries)
-		if selected_total:
-			print(f"Restored {opened}/{selected_total} saved workspace session(s).")
-		if skipped_pending:
-			print(f"Skipped {skipped_pending} pending new chat(s).")
-
-	def remove_selected_workspace_session(entry: SessionEntry) -> None:
-		if remove_workspace_session(codex_home, entry.session_id):
-			print(f"Removed from workspace: {entry.thread_name}")
-		else:
-			print("Selected session is not in the saved workspace.")
-		if sys.stdin.isatty():
-			input("Press Enter to return to dashboard...")
-
 	selection = interactive_pick(
 		entries,
 		favorites_file,
-		lambda entry: open_session_in_tab(entry, codex_home),
-		lambda entry: open_new_chat_tab(entry, codex_home),
-		lambda all_entries, favs: open_all_favorites(all_entries, favs, codex_home),
+		lambda entry: send_session_to_host(entry, codex_home),
+		lambda entry: send_new_chat_to_host(entry, codex_home),
+		lambda all_entries, favs: open_all_favorites(
+			all_entries, favs, codex_home
+		),
 		refresh_entries,
 		search_conversations,
-		remove_selected_workspace_session,
-		args.dashboard,
 	)
 	if selection is None:
 		print("Cancelled.")
 		return 0
 	if selection.action == "resume" and selection.entry is not None:
-		return launch_resume(selection.entry, codex_home)
+		return 0 if send_session_to_host(selection.entry, codex_home) else 1
 	if selection.action == "new_chat_current":
-		return launch_new_chat_current(selection.entry, codex_home)
+		return 0 if send_new_chat_to_host(selection.entry, codex_home) else 1
 	print("No action selected.")
 	return 0
 

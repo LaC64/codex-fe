@@ -12,4 +12,4 @@ if not exist "node_modules\electron\dist\electron.exe" (
 	if errorlevel 1 exit /b %errorlevel%
 )
 
-call npm start
+call npm start -- %*

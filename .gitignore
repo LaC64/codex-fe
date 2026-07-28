@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-electron-prototype/node_modules/
-electron-prototype/dist/
+codex-fe-host/node_modules/
+codex-fe-host/dist/

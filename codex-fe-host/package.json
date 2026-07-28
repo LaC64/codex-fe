@@ -1,11 +1,13 @@
 {
-	"name": "codex-fe-terminal-prototype",
+	"name": "codex-fe-host",
 	"version": "0.1.0",
 	"private": true,
-	"description": "Minimal Electron and ConPTY PowerShell terminal prototype",
+	"description": "Managed PowerShell terminal host for Codex-FE",
 	"main": "main.js",
 	"scripts": {
-		"start": "electron ."
+		"start": "electron .",
+		"test": "node --test test/*.test.js",
+		"test:integration": "node test/host-integration.js"
 	},
 	"dependencies": {
 		"@xterm/addon-fit": "0.11.0",

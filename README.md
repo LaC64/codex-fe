@@ -1,128 +1,112 @@
 # Codex CLI Front End
 
-Intended to replace the default `codex resume` front-end picker.
+Codex-FE replaces the default `codex resume` picker and opens selected conversations in a managed Electron terminal host.
 
-Interactive terminal picker for Codex sessions with:
+## Features
 
-- No need to switch to session folder to resume
-- Arrow-key navigation
-- Live type-to-filter
-- Favorites (pin/unpin) with persistence
-- Optional unnamed-session view toggle
-- Resume selected session in its last-used folder
-- Open selected/favorite sessions in new Windows Terminal tabs
-- Persistent Windows Terminal workspace with automatic session restore
-- Chat title and tab color support
-- Cached session metadata for fast startup
+- Find named and unnamed Codex sessions without changing folders
+- Navigate with arrow keys and filter by typing
+- Persist favorites
+- Resume sessions in their last-used folders
+- Open PowerShell/Codex sessions in managed Chromium tabs
+- Restore exactly the host tabs that were open when the app closed
+- Remove a session from future restoration by closing its host tab
+- Preserve chat titles, models, and full-trust Codex startup
 
-## Important Behavior
+Only sessions explicitly renamed with `/rename` are considered named. Use `Alt+a` to include unnamed sessions whose title is derived from their first message.
 
-- This is a front end for `codex resume`.
-- Named sessions are shown by default.
-- Unnamed sessions can be included in the picker with `Alt+a`.
+## Components
 
-## Files
+- `codex-fe.py` is the stateless terminal picker and session index reader.
+- `codex-fe.cmd` launches the picker.
+- `codex-fe-host` is the Electron/xterm.js/ConPTY application that owns PowerShell processes, tabs, and restore state.
 
-- `codex-fe.py` - main picker script
-- `codex-fe.cmd` - Windows launcher
+The Python picker never stores or restores tabs. The host is the only owner of `~/.codex/codex-fe-tabs.json`.
 
 ## Requirements
 
-- Windows (PowerShell + optional Windows Terminal `wt`)
+- Windows 10/11 with ConPTY
 - Python 3.10+
+- Node.js and npm
 - Codex CLI installed and on `PATH`
 
-## Usage
-
-From this folder:
+Install the host dependencies after cloning:
 
 ```powershell
-.\codex-fe.cmd
+cd C:\path\to\codex-fe\codex-fe-host
+npm install
 ```
 
-This opens the persistent Codex-FE dashboard in a named Windows Terminal window. After a reboot or closing that window, it automatically restores the saved Codex session tabs; no `--restore` command is needed.
-
-List mode:
+For global use, add the repository folder containing `codex-fe.cmd` to your user `PATH`:
 
 ```powershell
-.\codex-fe.cmd --list --show-cwd
-```
-
-Open all favorites in new tabs:
-
-```powershell
-.\codex-fe.cmd --open-favorites
-```
-
-`--restore` and `--restore-picker` remain accepted as compatibility aliases, but both now open the persistent dashboard:
-
-```powershell
-.\codex-fe.cmd --restore
-```
-
-## Run From Anywhere (Recommended)
-
-Put the folder containing `codex-fe.cmd` on your user `PATH` so you can run `codex-fe` from any directory.
-
-PowerShell (run once):
-
-```powershell
-$toolPath = "E:\GitHub\codex-fe"
-$current = [Environment]::GetEnvironmentVariable("Path", "User")
-if (-not $current) { $current = "" }
-if ($current -notlike "*$toolPath*") {
+$codexFeDir = (Resolve-Path "C:\path\to\codex-fe").Path
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($userPath -split ";") -notcontains $codexFeDir) {
 	[Environment]::SetEnvironmentVariable(
 		"Path",
-		($current.TrimEnd(";") + ";" + $toolPath).Trim(";"),
+		($userPath.TrimEnd(";") + ";" + $codexFeDir),
 		"User"
 	)
 }
 ```
 
-Then open a new terminal and verify:
+Open a new terminal after changing `PATH`. `codex-fe-host\start.cmd` also installs missing dependencies before launching the host. Normal picker use starts the host automatically after a session is selected.
+
+## Usage
+
+Run the picker:
 
 ```powershell
-where.exe codex-fe
-codex-fe --list
+codex-fe
 ```
 
-## Dashboard Controls
+List mode:
 
-- Action shortcuts use `Alt+...` so normal typing is reserved for the filter.
+```powershell
+codex-fe --list --show-cwd
+```
+
+Open all favorites in the host:
+
+```powershell
+codex-fe --open-favorites
+```
+
+Launch the host directly and restore its saved tabs:
+
+```powershell
+codex-fe-host\start.cmd
+```
+
+## Picker Controls
+
 - `Up/Down`, `PageUp/PageDown`, `Home/End` navigate
-- `Enter` open the selected session in a new managed Windows Terminal tab
-- Type to filter
-- `Backspace` remove filter text
+- `Enter` open the selected session in the host and exit the picker
+- `Shift+Enter` open the selected session and keep the picker open
+- Type to filter; `Backspace` removes filter text
 - `Alt+a` toggle unnamed session visibility
-- `Alt+d` remove the selected session from the saved workspace
 - `Alt+r` refresh sessions
-- `Alt+n` or `Alt+N` start a new managed chat tab
-- `Alt+Shift+O` open all favorites in new tabs
-- `Ctrl+P` copy the selected conversation JSONL file path
+- `Alt+n` start a new hosted chat and exit the picker
+- `Alt+N` start a new hosted chat and keep the picker open
+- `Alt+Shift+O` open all favorites in host tabs
+- `Ctrl+P` copy the selected conversation JSONL path
 - `Ctrl+F` or `*` toggle favorite
 - `Alt+q` quit
 
-## Persistent Workspace
+## Host Behavior
 
-Codex-FE keeps a dedicated dashboard as the first tab in a named Windows Terminal window. The dashboard owns the saved workspace and remains open while sessions are launched in adjacent tabs.
+- Every visible host tab has a stable tab ID, so duplicate tabs for the same Codex session are supported.
+- Closing one tab removes it immediately from the saved workspace.
+- Closing the host application preserves its remaining tab list.
+- Reopening the host resumes every saved Codex session in the same order.
+- `Ctrl+Tab` and `Ctrl+Shift+Tab` switch tabs.
+- `Ctrl+W` closes the active tab.
+- New chats begin as pending tabs and are updated with their generated Codex session ID once the session JSONL appears.
+- Terminal scrollback is not persisted; the Codex conversation itself is resumed by session ID.
 
-- Running `codex-fe` restores all resolved saved sessions automatically after the managed terminal window has been closed.
-- Running `codex-fe` while the dashboard is already running focuses that dashboard instead of restoring duplicate tabs.
-- `Alt+d` in the dashboard is the explicit way to remove a session from the next restore.
-- `codex-fe --workspace-status` lists saved sessions and pending new chats.
-- `codex-fe --clear-workspace` clears the saved workspace.
+On the first host launch, the removed Python dashboard files `codex-fe-workspace.json` and `codex-fe-dashboard.json` are renamed with `.legacy-<timestamp>` and ignored. They are not imported, so the managed host begins with a clean tab list.
 
-New chats are saved as pending entries first. Codex-FE tries to resolve them to the real session id after Codex writes the session file; ambiguous matches stay pending instead of restoring the wrong conversation. Closing an individual Windows Terminal tab does not change the saved workspace; remove it explicitly from the dashboard when it should no longer return.
+Favorites remain in `~/.codex/session_favorites.json`. Cached session metadata remains in `~/.codex/codex-fe-session-details-cache.json`.
 
-Older workspace files are migrated safely: their historical entries are retained as archived legacy records but are not auto-restored, because the previous format tracked every session ever launched rather than one live set of terminal tabs.
-
-## Notes
-
-- Favorites are stored in `~/.codex/session_favorites.json`.
-- Cached session metadata is stored in `~/.codex/codex-fe-session-details-cache.json`.
-- Workspace state is stored in `~/.codex/codex-fe-workspace.json`.
-- The active dashboard marker is stored in `~/.codex/codex-fe-dashboard.json` while the dashboard is running.
-- Workspace restore only tracks tabs launched through Codex-FE.
-- Sessions are resumed by `session_id` for reliability.
-- Resume launches use:
-  - `--dangerously-bypass-approvals-and-sandbox`
+Codex launches use `--dangerously-bypass-approvals-and-sandbox`.
