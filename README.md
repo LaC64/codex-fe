@@ -102,6 +102,7 @@ codex-fe-host\start.cmd
 - Reopening the host resumes every saved Codex session in the same order.
 - `Ctrl+Tab` and `Ctrl+Shift+Tab` switch tabs.
 - `Ctrl+W` closes the active tab.
+- `Ctrl+C` copies selected terminal text; with no selection it still interrupts the running command.
 - New chats begin as pending tabs and are updated with their generated Codex session ID once the session JSONL appears.
 - Terminal scrollback is not persisted; the Codex conversation itself is resumed by session ID.
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, clipboard, ipcMain } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -431,6 +431,10 @@ ipcMain.on("terminal:resize", (_event, tabId, cols, rows) => {
 
 ipcMain.handle("tab:activate", (_event, tabId) => activateTab(tabId));
 ipcMain.handle("tab:close", (_event, tabId) => closeTab(tabId));
+ipcMain.handle("clipboard:write-text", (_event, text) => {
+	clipboard.writeText(String(text || ""));
+	return true;
+});
 
 const hasInstanceLock = app.requestSingleInstanceLock();
 if (!hasInstanceLock) {

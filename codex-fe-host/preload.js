@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("hostAPI", {
 		ipcRenderer.send("terminal:resize", tabId, cols, rows),
 	activateTab: (tabId) => ipcRenderer.invoke("tab:activate", tabId),
 	closeTab: (tabId) => ipcRenderer.invoke("tab:close", tabId),
+	copyText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
 	onWorkspaceChanged: (callback) => subscribe("workspace:changed", callback),
 	onData: (callback) => subscribe("terminal:data", callback),
 	onExit: (callback) => subscribe("terminal:exit", callback),

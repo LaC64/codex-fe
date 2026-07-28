@@ -21,3 +21,8 @@
 - Added authenticated localhost commands so picker actions lazily start the host and open existing or new Codex sessions.
 - Added pending new-chat resolution, title refresh, legacy state archival, tab close persistence, and direct host restoration.
 - Verified the Windows Electron/ConPTY lifecycle with an isolated integration test covering duplicate tabs, active-tab removal, clean shutdown, and exact surviving-tab restoration.
+
+## 2026-07-28 - Terminal Selection Copy
+
+- Made `Ctrl+C` copy selected host-terminal text instead of forwarding an interrupt to Codex.
+- Preserved normal PowerShell interrupt behavior when no terminal text is selected.

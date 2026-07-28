@@ -46,7 +46,12 @@ async function waitUntil(description, readValue, timeoutMilliseconds = 20000) {
 function startHost() {
 	hostProcess = spawn(
 		electronExecutable,
-		[hostDir, "--codex-home", testHome],
+		[
+			`--user-data-dir=${path.join(testHome, "electron-user-data")}`,
+			hostDir,
+			"--codex-home",
+			testHome,
+		],
 		{
 			cwd: hostDir,
 			env: {

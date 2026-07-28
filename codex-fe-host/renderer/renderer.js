@@ -38,6 +38,11 @@ function createTerminalView(tab) {
 		if (event.type !== "keydown" || !event.ctrlKey) {
 			return true;
 		}
+		if (event.key.toLowerCase() === "c" && terminal.hasSelection()) {
+			const selectedText = terminal.getSelection();
+			window.hostAPI.copyText(selectedText).then(() => terminal.clearSelection());
+			return false;
+		}
 		if (event.key.toLowerCase() === "w") {
 			window.hostAPI.closeTab(tab.tabId);
 			return false;
