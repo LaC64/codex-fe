@@ -16,7 +16,6 @@ contextBridge.exposeInMainWorld("hostAPI", {
 	closeTab: (tabId) => ipcRenderer.invoke("tab:close", tabId),
 	newPowerShellTab: () => ipcRenderer.invoke("tab:new-powershell"),
 	copyText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
-	readText: () => ipcRenderer.invoke("clipboard:read-text"),
 	onWorkspaceChanged: (callback) => subscribe("workspace:changed", callback),
 	onData: (callback) => subscribe("terminal:data", callback),
 	onExit: (callback) => subscribe("terminal:exit", callback),
