@@ -1,0 +1,75 @@
+:root {
+	--background: #111111;
+	--surface: #1b1b1b;
+	--border: #363636;
+	--orange: #f28c28;
+	--text: #e7e7e7;
+	--muted: #999999;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	overflow: hidden;
+	background: var(--background);
+	color: var(--text);
+	font-family: "Aptos", "Helvetica Neue", sans-serif;
+}
+
+body {
+	display: grid;
+	grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.tab-bar {
+	display: flex;
+	align-items: stretch;
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+}
+
+.tab {
+	display: flex;
+	min-width: 180px;
+	align-items: center;
+	gap: 9px;
+	padding: 0 14px;
+	border-right: 1px solid var(--border);
+	font-size: 13px;
+}
+
+.tab.active {
+	border-top: 2px solid var(--orange);
+	background: var(--background);
+}
+
+.shell-mark {
+	color: var(--orange);
+	font-family: "Cascadia Mono", "Consolas", monospace;
+	font-weight: 700;
+}
+
+.status {
+	margin-left: auto;
+	align-self: center;
+	padding: 0 14px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+#terminal {
+	min-width: 0;
+	min-height: 0;
+	padding: 9px 10px;
+	background: var(--background);
+}
+
+.xterm {
+	height: 100%;
+}

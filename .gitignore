@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+electron-prototype/node_modules/
+electron-prototype/dist/
