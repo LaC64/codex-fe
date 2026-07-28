@@ -9,7 +9,7 @@ const {
 	createEmptyWorkspace,
 } = require("../workspace-store");
 
-test("workspace store preserves ordered duplicate sessions", () => {
+test("workspace store collapses duplicate sessions and preserves the active one", () => {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-store-"));
 	try {
 		const filePath = path.join(directory, "tabs.json");
@@ -24,6 +24,15 @@ test("workspace store preserves ordered duplicate sessions", () => {
 				title: "First",
 				model: "gpt-test",
 				createdAt: "2026-07-28T20:00:00.000Z",
+			},
+			{
+				tabId: "shell-tab",
+				kind: "powershell",
+				sessionId: "",
+				cwd: directory,
+				title: "PowerShell",
+				model: "",
+				createdAt: "2026-07-28T20:00:00.500Z",
 			},
 			{
 				tabId: "tab-two",
@@ -41,10 +50,11 @@ test("workspace store preserves ordered duplicate sessions", () => {
 		const loaded = store.load();
 		assert.deepEqual(
 			loaded.tabs.map((tab) => tab.tabId),
-			["tab-one", "tab-two"],
+			["shell-tab", "tab-two"],
 		);
 		assert.equal(loaded.activeTabId, "tab-two");
-		assert.equal(loaded.tabs[0].sessionId, loaded.tabs[1].sessionId);
+		assert.equal(loaded.tabs[0].kind, "powershell");
+		assert.equal(loaded.tabs[1].sessionId, "same-session");
 	} finally {
 		fs.rmSync(directory, { recursive: true, force: true });
 	}

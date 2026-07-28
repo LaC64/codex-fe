@@ -1,4 +1,5 @@
 const tabsElement = document.getElementById("tabs");
+const addTabElement = document.getElementById("tab-add");
 const terminalsElement = document.getElementById("terminals");
 const statusElement = document.getElementById("status");
 const emptyElement = document.getElementById("empty");
@@ -193,6 +194,7 @@ function markExited(tabId, exitCode) {
 window.hostAPI.onWorkspaceChanged(syncWorkspace);
 window.hostAPI.onData((tabId, data) => terminalViews.get(tabId)?.terminal.write(data));
 window.hostAPI.onExit(markExited);
+addTabElement.addEventListener("click", () => window.hostAPI.newPowerShellTab());
 new ResizeObserver(fitActiveTerminal).observe(terminalsElement);
 
 window.hostAPI

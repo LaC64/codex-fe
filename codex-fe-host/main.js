@@ -178,20 +178,23 @@ function spawnTab(tab) {
 
 	try {
 		const shellCwd = fs.existsSync(tab.cwd) ? tab.cwd : os.homedir();
-		const command = fs.existsSync(tab.cwd)
-			? makePowerShellCommand(tab)
-			: `Write-Host ${quotePowerShell(`Saved folder no longer exists: ${tab.cwd}`)} -ForegroundColor Red`;
+		const shellArguments =
+			tab.kind === "powershell"
+				? ["-NoLogo"]
+				: [
+						"-NoLogo",
+						"-NoExit",
+						"-NoProfile",
+						"-ExecutionPolicy",
+						"Bypass",
+						"-Command",
+						fs.existsSync(tab.cwd)
+							? makePowerShellCommand(tab)
+							: `Write-Host ${quotePowerShell(`Saved folder no longer exists: ${tab.cwd}`)} -ForegroundColor Red`,
+					];
 		runtime.pty = pty.spawn(
 			"powershell.exe",
-			[
-				"-NoLogo",
-				"-NoExit",
-				"-NoProfile",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-Command",
-				command,
-			],
+			shellArguments,
 			{
 				name: "xterm-256color",
 				cols: 120,
@@ -228,26 +231,53 @@ function spawnTab(tab) {
 	return runtime;
 }
 
-function addTab(command) {
-	const cwd = normalizeCwd(command.cwd);
-	const isSession = command.type === "open_session";
-	if (isSession && !String(command.session_id || "").trim()) {
-		throw new Error("A session ID is required.");
-	}
-	const tab = {
-		tabId: crypto.randomUUID(),
-		kind: isSession ? "session" : "pending_new_chat",
-		sessionId: isSession ? String(command.session_id).trim() : "",
-		cwd,
-		title: String(command.title || "").trim() || (isSession ? "Codex Session" : "Codex New Chat"),
-		model: String(command.model || "").trim(),
-		createdAt: new Date().toISOString(),
-	};
+function appendTab(tab) {
 	workspace.tabs.push(tab);
 	workspace.activeTabId = tab.tabId;
 	commitWorkspace();
 	focusWindow();
 	return tab;
+}
+
+function addTab(command) {
+	const isSession = command.type === "open_session";
+	const sessionId = isSession ? String(command.session_id || "").trim() : "";
+	if (isSession && !sessionId) {
+		throw new Error("A session ID is required.");
+	}
+	const existingTab = isSession
+		? workspace.tabs.find(
+				(tab) => tab.kind === "session" && tab.sessionId === sessionId,
+			)
+		: null;
+	if (existingTab) {
+		activateTab(existingTab.tabId);
+		focusWindow();
+		return { tab: existingTab, existing: true };
+	}
+	const cwd = normalizeCwd(command.cwd);
+	const tab = {
+		tabId: crypto.randomUUID(),
+		kind: isSession ? "session" : "pending_new_chat",
+		sessionId,
+		cwd,
+		title: String(command.title || "").trim() || (isSession ? "Codex Session" : "Codex New Chat"),
+		model: String(command.model || "").trim(),
+		createdAt: new Date().toISOString(),
+	};
+	return { tab: appendTab(tab), existing: false };
+}
+
+function addPowerShellTab() {
+	return appendTab({
+		tabId: crypto.randomUUID(),
+		kind: "powershell",
+		sessionId: "",
+		cwd: os.homedir(),
+		title: "PowerShell",
+		model: "",
+		createdAt: new Date().toISOString(),
+	});
 }
 
 function closeTab(tabId) {
@@ -363,6 +393,24 @@ function startCommandServer() {
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			request.method === "POST" &&
+			request.url === "/test/click-add"
+		) {
+			const clicked = await mainWindow.webContents.executeJavaScript(`
+				(() => {
+					const button = document.getElementById("tab-add");
+					if (!button) {
+						return false;
+					}
+					button.click();
+					return true;
+				})()
+			`);
+			sendJson(response, 200, { ok: clicked });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "POST" &&
 			request.url === "/test/close-active"
 		) {
 			const closedTabId = workspace.activeTabId;
@@ -390,8 +438,12 @@ function startCommandServer() {
 			if (!["open_session", "new_chat"].includes(command.type)) {
 				throw new Error(`Unsupported command type: ${command.type}`);
 			}
-			const tab = addTab(command);
-			sendJson(response, 200, { ok: true, tab_id: tab.tabId });
+			const result = addTab(command);
+			sendJson(response, 200, {
+				ok: true,
+				tab_id: result.tab.tabId,
+				existing: result.existing,
+			});
 		} catch (error) {
 			sendJson(response, 400, { ok: false, error: String(error.message || error) });
 		}
@@ -431,6 +483,7 @@ ipcMain.on("terminal:resize", (_event, tabId, cols, rows) => {
 
 ipcMain.handle("tab:activate", (_event, tabId) => activateTab(tabId));
 ipcMain.handle("tab:close", (_event, tabId) => closeTab(tabId));
+ipcMain.handle("tab:new-powershell", () => addPowerShellTab().tabId);
 ipcMain.handle("clipboard:write-text", (_event, text) => {
 	clipboard.writeText(String(text || ""));
 	return true;
@@ -448,6 +501,7 @@ if (!hasInstanceLock) {
 		archiveLegacyState(codexHome);
 		workspaceStore = new WorkspaceStore(path.join(codexHome, "codex-fe-tabs.json"));
 		workspace = workspaceStore.load();
+		workspaceStore.save(workspace);
 		discoveryFile = path.join(codexHome, "codex-fe-host.json");
 		createWindow();
 		startCommandServer();

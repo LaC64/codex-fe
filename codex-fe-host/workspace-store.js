@@ -23,7 +23,7 @@ function normalizeTab(value) {
 	if (
 		!tabId ||
 		!cwd ||
-		!["session", "pending_new_chat"].includes(kind) ||
+		!["session", "pending_new_chat", "powershell"].includes(kind) ||
 		(kind === "session" && !sessionId)
 	) {
 		return null;
@@ -31,22 +31,45 @@ function normalizeTab(value) {
 	return {
 		tabId,
 		kind,
-		sessionId,
+		sessionId: kind === "session" ? sessionId : "",
 		cwd,
-		title: String(value.title || "").trim() || "Codex Session",
-		model: String(value.model || "").trim(),
+		title:
+			String(value.title || "").trim() ||
+			(kind === "powershell" ? "PowerShell" : "Codex Session"),
+		model: kind === "powershell" ? "" : String(value.model || "").trim(),
 		createdAt: String(value.createdAt || "").trim() || new Date().toISOString(),
 	};
+}
+
+function uniqueSessionTabs(tabs, requestedActiveId) {
+	const preferredTabBySession = new Map();
+	for (const tab of tabs) {
+		if (tab.kind !== "session") {
+			continue;
+		}
+		if (
+			!preferredTabBySession.has(tab.sessionId) ||
+			tab.tabId === requestedActiveId
+		) {
+			preferredTabBySession.set(tab.sessionId, tab.tabId);
+		}
+	}
+	return tabs.filter(
+		(tab) =>
+			tab.kind !== "session" ||
+			preferredTabBySession.get(tab.sessionId) === tab.tabId,
+	);
 }
 
 function normalizeWorkspace(value) {
 	if (!value || typeof value !== "object" || value.version !== WORKSPACE_VERSION) {
 		return createEmptyWorkspace();
 	}
-	const tabs = Array.isArray(value.tabs)
+	const normalizedTabs = Array.isArray(value.tabs)
 		? value.tabs.map(normalizeTab).filter(Boolean)
 		: [];
 	const requestedActiveId = String(value.activeTabId || "").trim();
+	const tabs = uniqueSessionTabs(normalizedTabs, requestedActiveId);
 	return {
 		version: WORKSPACE_VERSION,
 		tabs,

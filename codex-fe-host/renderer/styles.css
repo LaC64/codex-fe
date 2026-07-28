@@ -38,10 +38,30 @@ body {
 
 .tabs {
 	display: flex;
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow-x: auto;
 	overflow-y: hidden;
 	scrollbar-width: thin;
+}
+
+.tab-add {
+	width: 42px;
+	flex: 0 0 42px;
+	border: 0;
+	border-right: 1px solid var(--border);
+	background: var(--surface);
+	color: var(--muted);
+	font: inherit;
+	font-size: 22px;
+	line-height: 1;
+}
+
+.tab-add:hover,
+.tab-add:focus-visible {
+	background: var(--surface-active);
+	color: var(--orange);
+	outline: 0;
 }
 
 .tab {

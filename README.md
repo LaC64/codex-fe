@@ -9,6 +9,8 @@ Codex-FE replaces the default `codex resume` picker and opens selected conversat
 - Persist favorites
 - Resume sessions in their last-used folders
 - Open PowerShell/Codex sessions in managed Chromium tabs
+- Reuse an already-open tab when the same Codex session is selected again
+- Open standalone PowerShell tabs from the host tab bar
 - Restore exactly the host tabs that were open when the app closed
 - Remove a session from future restoration by closing its host tab
 - Preserve chat titles, models, and full-trust Codex startup
@@ -96,7 +98,9 @@ codex-fe-host\start.cmd
 
 ## Host Behavior
 
-- Every visible host tab has a stable tab ID, so duplicate tabs for the same Codex session are supported.
+- Every visible host tab has a stable tab ID, and each Codex session ID maps to at most one tab.
+- Selecting an already-open Codex session focuses its existing tab instead of starting another process.
+- The `+` button opens a standalone PowerShell tab without starting Codex.
 - Closing one tab removes it immediately from the saved workspace.
 - Closing the host application preserves its remaining tab list.
 - Reopening the host resumes every saved Codex session in the same order.

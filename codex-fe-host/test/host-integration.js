@@ -190,20 +190,22 @@ async function run() {
 		firstDiscovery,
 		"POST",
 		"/commands",
-		command,
+		{ ...command, cwd: path.join(testHome, "missing-folder") },
 	);
-	assert.notEqual(firstResponse.tab_id, secondResponse.tab_id);
+	assert.equal(firstResponse.tab_id, secondResponse.tab_id);
+	assert.equal(firstResponse.existing, false);
+	assert.equal(secondResponse.existing, true);
 
-	const firstState = await waitUntil("two persisted tabs", () => {
+	const firstState = await waitUntil("one unique persisted session tab", () => {
 		if (!fs.existsSync(stateFile)) {
 			return null;
 		}
 		const state = loadJson(stateFile);
-		return state.tabs.length === 2 ? state : null;
+		return state.tabs.length === 1 ? state : null;
 	});
 	assert.deepEqual(
 		firstState.tabs.map((tab) => tab.sessionId),
-		["integration-session", "integration-session"],
+		["integration-session"],
 	);
 	assert.equal(
 		firstState.tabs.some((tab) => tab.sessionId === "must-not-import"),
@@ -213,13 +215,30 @@ async function run() {
 		fs.readdirSync(testHome).filter((name) => name.includes(".legacy-")).length,
 		2,
 	);
+	const powerShellResponse = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/click-add",
+	);
+	assert.equal(powerShellResponse.ok, true);
+	const stateWithPowerShell = await waitUntil("persisted PowerShell tab", () => {
+		const state = loadJson(stateFile);
+		return state.tabs.length === 2 ? state : null;
+	});
+	assert.deepEqual(
+		stateWithPowerShell.tabs.map((tab) => tab.kind),
+		["session", "powershell"],
+	);
+	assert.equal(stateWithPowerShell.tabs[1].title, "PowerShell");
+	assert.equal(stateWithPowerShell.tabs[1].cwd, os.homedir());
+	const powerShellTabId = stateWithPowerShell.tabs[1].tabId;
 	const closeResponse = await hostRequest(
 		firstDiscovery,
 		"POST",
 		"/test/close-active",
 	);
 	assert.equal(closeResponse.ok, true);
-	assert.equal(closeResponse.tab_id, secondResponse.tab_id);
+	assert.equal(closeResponse.tab_id, powerShellTabId);
 	const stateAfterClose = await waitUntil("closed tab removal", () => {
 		const state = loadJson(stateFile);
 		return state.tabs.length === 1 ? state : null;

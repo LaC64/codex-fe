@@ -10,10 +10,11 @@
 <body>
 	<header class="tab-bar">
 		<div class="tabs" id="tabs"></div>
+		<button class="tab-add" id="tab-add" type="button" title="New PowerShell tab" aria-label="New PowerShell tab">+</button>
 		<div class="status" id="status">Starting...</div>
 	</header>
 	<main id="terminals">
-		<div class="empty" id="empty">No sessions open. Choose one in Codex-FE.</div>
+		<div class="empty" id="empty">No tabs open. Choose a Codex session or press + for PowerShell.</div>
 	</main>
 	<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
 	<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>

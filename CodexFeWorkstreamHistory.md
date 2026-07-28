@@ -27,3 +27,9 @@
 - Made `Ctrl+C` copy selected host-terminal text instead of forwarding an interrupt to Codex.
 - Preserved normal PowerShell interrupt behavior when no terminal text is selected.
 - Added `Ctrl+V` clipboard paste through xterm so hosted terminals match normal PowerShell terminal behavior.
+
+## 2026-07-28 - Unique Sessions And PowerShell Tabs
+
+- Changed existing-session selection to focus the matching host tab instead of opening a duplicate.
+- Added startup normalization that collapses previously saved duplicate session tabs while preserving the active duplicate when possible.
+- Added a `+` tab-bar button for standalone, persisted PowerShell tabs that do not launch Codex.
