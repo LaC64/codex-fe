@@ -35,3 +35,10 @@
 - Changed existing-session selection to focus the matching host tab instead of opening a duplicate.
 - Added startup normalization that collapses previously saved duplicate session tabs while preserving the active duplicate when possible.
 - Added a `+` tab-bar button for standalone, persisted PowerShell tabs that do not launch Codex.
+
+## 2026-07-29 - Existing Tab Session Relaunch
+
+- Added ephemeral per-PTY Codex-running state while keeping persisted tab identity in `codex-fe-tabs.json`.
+- Added a hidden, streaming-safe PowerShell exit marker so the host knows when managed Codex has returned to the shell prompt.
+- Changed existing-session selection to resume Codex in that tab when it is at PowerShell, while continuing to only focus the tab when Codex is still running.
+- Added split-marker unit coverage and a live regression sequence that verifies the same tab launches managed Codex twice after the first process exits.

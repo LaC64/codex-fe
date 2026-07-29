@@ -29,7 +29,7 @@ async function waitUntil(description, readValue, timeoutMilliseconds = 20000) {
 	let lastError = null;
 	while (Date.now() < deadline) {
 		try {
-			const value = readValue();
+			const value = await readValue();
 			if (value) {
 				return value;
 			}
@@ -186,6 +186,17 @@ async function run() {
 		"/commands",
 		command,
 	);
+	const firstExitState = await waitUntil("first managed Codex exit", async () => {
+		const state = await hostRequest(
+			firstDiscovery,
+			"GET",
+			`/test/runtime?tab_id=${encodeURIComponent(firstResponse.tab_id)}`,
+		);
+		return state.ok && !state.codex_running && state.launch_count === 1
+			? state
+			: null;
+	});
+	assert.equal(firstExitState.launch_count, 1);
 	const secondResponse = await hostRequest(
 		firstDiscovery,
 		"POST",
@@ -194,7 +205,18 @@ async function run() {
 	);
 	assert.equal(firstResponse.tab_id, secondResponse.tab_id);
 	assert.equal(firstResponse.existing, false);
+	assert.equal(firstResponse.relaunched, false);
 	assert.equal(secondResponse.existing, true);
+	assert.equal(secondResponse.relaunched, true);
+	const secondExitState = await waitUntil("second managed Codex exit", async () => {
+		const state = await hostRequest(
+			firstDiscovery,
+			"GET",
+			`/test/runtime?tab_id=${encodeURIComponent(firstResponse.tab_id)}`,
+		);
+		return !state.codex_running && state.launch_count === 2 ? state : null;
+	});
+	assert.equal(secondExitState.launch_count, 2);
 
 	const firstState = await waitUntil("one unique persisted session tab", () => {
 		if (!fs.existsSync(stateFile)) {

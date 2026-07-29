@@ -15,6 +15,10 @@ const {
 	loadSessionTitles,
 	resolvePendingTabs,
 } = require("./session-resolver");
+const {
+	consumeExitMarkers,
+	flushMarkerRemainder,
+} = require("./runtime-output");
 
 const FULL_TRUST_ARGS = ["--dangerously-bypass-approvals-and-sandbox"];
 const MAX_COMMAND_BYTES = 64 * 1024;
@@ -81,7 +85,7 @@ function resolveCodexExecutable() {
 	throw new Error("Could not find Codex on PATH.");
 }
 
-function makePowerShellCommand(tab) {
+function makePowerShellCommand(tab, exitToken) {
 	const codexExecutable = resolveCodexExecutable();
 	const title = quotePowerShell(tab.title || "Codex");
 	const cwd = quotePowerShell(tab.cwd);
@@ -97,6 +101,7 @@ function makePowerShellCommand(tab) {
 		`$codexExecutable = ${executable}`,
 		`$codexArgs = @(${argsList})`,
 		"& $codexExecutable @codexArgs",
+		`[Console]::Write(([char]27) + ']9;codex-fe-exit=${exitToken}' + ([char]7))`,
 	].join("; ");
 }
 
@@ -161,6 +166,29 @@ function appendBacklog(runtime, data) {
 	}
 }
 
+function emitRuntimeData(tabId, runtime, data) {
+	if (!data) {
+		return;
+	}
+	if (
+		runtime.attached &&
+		mainWindow &&
+		!mainWindow.isDestroyed()
+	) {
+		mainWindow.webContents.send("terminal:data", tabId, data);
+	} else {
+		appendBacklog(runtime, data);
+	}
+}
+
+function processRuntimeData(tabId, runtime, data) {
+	const result = consumeExitMarkers(runtime, data, runtime.exitMarker);
+	if (result.markerCount > 0) {
+		runtime.codexRunning = false;
+	}
+	emitRuntimeData(tabId, runtime, result.visibleData);
+}
+
 function spawnTab(tab) {
 	const existing = runtimes.get(tab.tabId);
 	if (existing && !existing.exited) {
@@ -173,7 +201,13 @@ function spawnTab(tab) {
 		attached: false,
 		exited: false,
 		exitCode: null,
+		exitToken: crypto.randomBytes(16).toString("hex"),
+		exitMarker: "",
+		markerRemainder: "",
+		codexRunning: false,
+		codexLaunchCount: 0,
 	};
+	runtime.exitMarker = `\x1b]9;codex-fe-exit=${runtime.exitToken}\x07`;
 	runtimes.set(tab.tabId, runtime);
 
 	try {
@@ -189,9 +223,13 @@ function spawnTab(tab) {
 						"Bypass",
 						"-Command",
 						fs.existsSync(tab.cwd)
-							? makePowerShellCommand(tab)
+							? makePowerShellCommand(tab, runtime.exitToken)
 							: `Write-Host ${quotePowerShell(`Saved folder no longer exists: ${tab.cwd}`)} -ForegroundColor Red`,
 					];
+		if (tab.kind !== "powershell" && fs.existsSync(tab.cwd)) {
+			runtime.codexRunning = true;
+			runtime.codexLaunchCount = 1;
+		}
 		runtime.pty = pty.spawn(
 			"powershell.exe",
 			shellArguments,
@@ -204,21 +242,13 @@ function spawnTab(tab) {
 				useConpty: true,
 			},
 		);
-		runtime.pty.onData((data) => {
-			if (
-				runtime.attached &&
-				mainWindow &&
-				!mainWindow.isDestroyed()
-			) {
-				mainWindow.webContents.send("terminal:data", tab.tabId, data);
-			} else {
-				appendBacklog(runtime, data);
-			}
-		});
+		runtime.pty.onData((data) => processRuntimeData(tab.tabId, runtime, data));
 		runtime.pty.onExit(({ exitCode }) => {
+			emitRuntimeData(tab.tabId, runtime, flushMarkerRemainder(runtime));
 			runtime.exited = true;
 			runtime.exitCode = exitCode;
 			runtime.pty = null;
+			runtime.codexRunning = false;
 			if (mainWindow && !mainWindow.isDestroyed()) {
 				mainWindow.webContents.send("terminal:exit", tab.tabId, exitCode);
 			}
@@ -229,6 +259,38 @@ function spawnTab(tab) {
 		appendBacklog(runtime, `\r\n\x1b[31m${String(error.message || error)}\x1b[0m\r\n`);
 	}
 	return runtime;
+}
+
+function launchSessionInRuntime(tab, runtime) {
+	const command = makePowerShellCommand(tab, runtime.exitToken);
+	runtime.codexRunning = true;
+	runtime.codexLaunchCount += 1;
+	try {
+		runtime.pty.write(`${command}\r`);
+	} catch (error) {
+		runtime.codexRunning = false;
+		runtime.codexLaunchCount -= 1;
+		throw error;
+	}
+}
+
+function ensureSessionRunning(tab) {
+	const previousRuntime = runtimes.get(tab.tabId);
+	if (!previousRuntime || previousRuntime.exited) {
+		const wasAttached = previousRuntime?.attached || false;
+		const runtime = spawnTab(tab);
+		if (wasAttached) {
+			runtime.attached = true;
+			emitRuntimeData(tab.tabId, runtime, runtime.backlog);
+			runtime.backlog = "";
+		}
+		return true;
+	}
+	if (!previousRuntime.codexRunning) {
+		launchSessionInRuntime(tab, previousRuntime);
+		return true;
+	}
+	return false;
 }
 
 function appendTab(tab) {
@@ -251,9 +313,10 @@ function addTab(command) {
 			)
 		: null;
 	if (existingTab) {
+		const relaunched = ensureSessionRunning(existingTab);
 		activateTab(existingTab.tabId);
 		focusWindow();
-		return { tab: existingTab, existing: true };
+		return { tab: existingTab, existing: true, relaunched };
 	}
 	const cwd = normalizeCwd(command.cwd);
 	const tab = {
@@ -265,7 +328,7 @@ function addTab(command) {
 		model: String(command.model || "").trim(),
 		createdAt: new Date().toISOString(),
 	};
-	return { tab: appendTab(tab), existing: false };
+	return { tab: appendTab(tab), existing: false, relaunched: false };
 }
 
 function addPowerShellTab() {
@@ -392,6 +455,20 @@ function startCommandServer() {
 		}
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "GET" &&
+			request.url.startsWith("/test/runtime")
+		) {
+			const requestUrl = new URL(request.url, "http://127.0.0.1");
+			const runtime = runtimes.get(requestUrl.searchParams.get("tab_id"));
+			sendJson(response, 200, {
+				ok: Boolean(runtime),
+				codex_running: runtime?.codexRunning ?? false,
+				launch_count: runtime?.codexLaunchCount ?? 0,
+			});
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			request.method === "POST" &&
 			request.url === "/test/click-add"
 		) {
@@ -443,6 +520,7 @@ function startCommandServer() {
 				ok: true,
 				tab_id: result.tab.tabId,
 				existing: result.existing,
+				relaunched: result.relaunched,
 			});
 		} catch (error) {
 			sendJson(response, 400, { ok: false, error: String(error.message || error) });

@@ -100,6 +100,7 @@ codex-fe-host\start.cmd
 
 - Every visible host tab has a stable tab ID, and each Codex session ID maps to at most one tab.
 - Selecting an already-open Codex session focuses its existing tab instead of starting another process.
+- If Codex has exited to that tab's PowerShell prompt, selecting the session resumes Codex again in the same tab.
 - The `+` button opens a standalone PowerShell tab without starting Codex.
 - Closing one tab removes it immediately from the saved workspace.
 - Closing the host application preserves its remaining tab list.
