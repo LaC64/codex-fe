@@ -44,6 +44,9 @@ function createTerminalView(tab) {
 			window.hostAPI.copyText(selectedText).then(() => terminal.clearSelection());
 			return false;
 		}
+		if (event.key.toLowerCase() === "v") {
+			return false;
+		}
 		if (event.key.toLowerCase() === "w") {
 			window.hostAPI.closeTab(tab.tabId);
 			return false;

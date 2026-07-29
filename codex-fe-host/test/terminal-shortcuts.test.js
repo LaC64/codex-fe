@@ -5,6 +5,10 @@ const test = require("node:test");
 
 test("clipboard paste has only xterm's native input path", () => {
 	const hostRoot = path.resolve(__dirname, "..");
+	const renderer = fs.readFileSync(
+		path.join(hostRoot, "renderer", "renderer.js"),
+		"utf8",
+	);
 	const sources = [
 		"main.js",
 		"preload.js",
@@ -16,4 +20,8 @@ test("clipboard paste has only xterm's native input path", () => {
 	assert.doesNotMatch(sources, /clipboard:read-text/);
 	assert.doesNotMatch(sources, /\.readText\(/);
 	assert.doesNotMatch(sources, /terminal\.paste\(/);
+	assert.match(
+		renderer,
+		/event\.key\.toLowerCase\(\) === "v"\)\s*\{\s*return false;/,
+	);
 });

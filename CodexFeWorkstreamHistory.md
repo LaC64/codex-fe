@@ -28,6 +28,7 @@
 - Preserved normal PowerShell interrupt behavior when no terminal text is selected.
 - Added `Ctrl+V` clipboard paste through xterm so hosted terminals match normal PowerShell terminal behavior.
 - Removed the redundant programmatic paste path after Chromium and xterm were both inserting the same clipboard text.
+- Suppressed raw `Ctrl+V` terminal encoding while retaining xterm's single native paste event, preventing Codex from interpreting text paste as image paste.
 
 ## 2026-07-28 - Unique Sessions And PowerShell Tabs
 
