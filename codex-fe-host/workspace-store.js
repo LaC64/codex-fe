@@ -2,11 +2,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const WORKSPACE_VERSION = 1;
+const MAX_CLOSED_TABS = 50;
 
 function createEmptyWorkspace() {
 	return {
 		version: WORKSPACE_VERSION,
 		tabs: [],
+		closedTabs: [],
 		activeTabId: null,
 		updatedAt: new Date().toISOString(),
 	};
@@ -61,6 +63,40 @@ function uniqueSessionTabs(tabs, requestedActiveId) {
 	);
 }
 
+function tabsShareIdentity(left, right) {
+	if (left.tabId === right.tabId) {
+		return true;
+	}
+	return (
+		left.kind === "session" &&
+		right.kind === "session" &&
+		left.sessionId === right.sessionId
+	);
+}
+
+function normalizeClosedTabs(values, openTabs) {
+	const normalized = Array.isArray(values)
+		? values.map(normalizeTab).filter(Boolean)
+		: [];
+	const retainedNewestFirst = [];
+	for (let index = normalized.length - 1; index >= 0; index -= 1) {
+		const tab = normalized[index];
+		if (
+			openTabs.some((openTab) => tabsShareIdentity(openTab, tab)) ||
+			retainedNewestFirst.some((closedTab) =>
+				tabsShareIdentity(closedTab, tab),
+			)
+		) {
+			continue;
+		}
+		retainedNewestFirst.push(tab);
+		if (retainedNewestFirst.length === MAX_CLOSED_TABS) {
+			break;
+		}
+	}
+	return retainedNewestFirst.reverse();
+}
+
 function normalizeWorkspace(value) {
 	if (!value || typeof value !== "object" || value.version !== WORKSPACE_VERSION) {
 		return createEmptyWorkspace();
@@ -73,6 +109,7 @@ function normalizeWorkspace(value) {
 	return {
 		version: WORKSPACE_VERSION,
 		tabs,
+		closedTabs: normalizeClosedTabs(value.closedTabs, tabs),
 		activeTabId: tabs.some((tab) => tab.tabId === requestedActiveId)
 			? requestedActiveId
 			: tabs[0]?.tabId || null,
@@ -128,9 +165,11 @@ function archiveLegacyState(codexHome) {
 }
 
 module.exports = {
+	MAX_CLOSED_TABS,
 	WORKSPACE_VERSION,
 	WorkspaceStore,
 	archiveLegacyState,
 	createEmptyWorkspace,
 	normalizeWorkspace,
+	tabsShareIdentity,
 };

@@ -7,8 +7,10 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const pty = require("node-pty");
 const {
+	MAX_CLOSED_TABS,
 	archiveLegacyState,
 	createEmptyWorkspace,
+	tabsShareIdentity,
 	WorkspaceStore,
 } = require("./workspace-store");
 const {
@@ -294,6 +296,9 @@ function ensureSessionRunning(tab) {
 }
 
 function appendTab(tab) {
+	workspace.closedTabs = workspace.closedTabs.filter(
+		(closedTab) => !tabsShareIdentity(closedTab, tab),
+	);
 	workspace.tabs.push(tab);
 	workspace.activeTabId = tab.tabId;
 	commitWorkspace();
@@ -343,12 +348,23 @@ function addPowerShellTab() {
 	});
 }
 
+function rememberClosedTab(tab) {
+	workspace.closedTabs = workspace.closedTabs.filter(
+		(closedTab) => !tabsShareIdentity(closedTab, tab),
+	);
+	workspace.closedTabs.push({ ...tab });
+	if (workspace.closedTabs.length > MAX_CLOSED_TABS) {
+		workspace.closedTabs = workspace.closedTabs.slice(-MAX_CLOSED_TABS);
+	}
+}
+
 function closeTab(tabId) {
 	const index = workspace.tabs.findIndex((tab) => tab.tabId === tabId);
 	if (index < 0) {
 		return false;
 	}
-	workspace.tabs.splice(index, 1);
+	const [closedTab] = workspace.tabs.splice(index, 1);
+	rememberClosedTab(closedTab);
 	if (workspace.activeTabId === tabId) {
 		const replacement = workspace.tabs[Math.min(index, workspace.tabs.length - 1)];
 		workspace.activeTabId = replacement?.tabId || null;
@@ -358,6 +374,23 @@ function closeTab(tabId) {
 	runtimes.delete(tabId);
 	runtime?.pty?.kill();
 	return true;
+}
+
+function restoreLastClosedTab() {
+	const tab = workspace.closedTabs.pop();
+	if (!tab) {
+		return null;
+	}
+	const existingTab = workspace.tabs.find((openTab) =>
+		tabsShareIdentity(openTab, tab),
+	);
+	if (existingTab) {
+		workspace.activeTabId = existingTab.tabId;
+		commitWorkspace();
+		focusWindow();
+		return existingTab;
+	}
+	return appendTab(tab);
 }
 
 function activateTab(tabId) {
@@ -470,6 +503,24 @@ function startCommandServer() {
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			request.method === "POST" &&
+			request.url === "/test/restore-shortcut"
+		) {
+			mainWindow.webContents.sendInputEvent({
+				type: "keyDown",
+				keyCode: "T",
+				modifiers: ["control", "shift"],
+			});
+			mainWindow.webContents.sendInputEvent({
+				type: "keyUp",
+				keyCode: "T",
+				modifiers: ["control", "shift"],
+			});
+			sendJson(response, 200, { ok: true });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "POST" &&
 			request.url === "/test/click-add"
 		) {
 			const clicked = await mainWindow.webContents.executeJavaScript(`
@@ -562,6 +613,7 @@ ipcMain.on("terminal:resize", (_event, tabId, cols, rows) => {
 ipcMain.handle("tab:activate", (_event, tabId) => activateTab(tabId));
 ipcMain.handle("tab:close", (_event, tabId) => closeTab(tabId));
 ipcMain.handle("tab:new-powershell", () => addPowerShellTab().tabId);
+ipcMain.handle("tab:restore-closed", () => restoreLastClosedTab()?.tabId || null);
 ipcMain.handle("clipboard:write-text", (_event, text) => {
 	clipboard.writeText(String(text || ""));
 	return true;

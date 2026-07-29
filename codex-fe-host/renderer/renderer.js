@@ -7,6 +7,24 @@ const terminalViews = new Map();
 
 let workspace = { tabs: [], activeTabId: null };
 
+window.addEventListener(
+	"keydown",
+	(event) => {
+		if (
+			event.ctrlKey &&
+			event.shiftKey &&
+			!event.altKey &&
+			!event.metaKey &&
+			event.key.toLowerCase() === "t"
+		) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			window.hostAPI.restoreClosedTab();
+		}
+	},
+	true,
+);
+
 function createTerminalView(tab) {
 	const panel = document.createElement("section");
 	panel.className = "terminal-panel";

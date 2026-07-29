@@ -103,6 +103,8 @@ codex-fe-host\start.cmd
 - If Codex has exited to that tab's PowerShell prompt, selecting the session resumes Codex again in the same tab.
 - The `+` button opens a standalone PowerShell tab without starting Codex.
 - Closing one tab removes it immediately from the saved workspace.
+- `Ctrl+Shift+T` reopens the most recently closed tab. Repeated presses restore older tabs in reverse close order.
+- Closed-tab history persists across host restarts and retains the 50 most recently closed tabs.
 - Closing the host application preserves its remaining tab list.
 - Reopening the host resumes every saved Codex session in the same order.
 - `Ctrl+Tab` and `Ctrl+Shift+Tab` switch tabs.

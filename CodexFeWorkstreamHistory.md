@@ -42,3 +42,11 @@
 - Added a hidden, streaming-safe PowerShell exit marker so the host knows when managed Codex has returned to the shell prompt.
 - Changed existing-session selection to resume Codex in that tab when it is at PowerShell, while continuing to only focus the tab when Codex is still running.
 - Added split-marker unit coverage and a live regression sequence that verifies the same tab launches managed Codex twice after the first process exits.
+
+## 2026-07-29 - Closed Tab Restoration
+
+- Added a persisted, 50-entry closed-tab history to the host's canonical `codex-fe-tabs.json` workspace.
+- Added browser-style `Ctrl+Shift+T` restoration in last-closed-first-restored order, including when no tabs remain open.
+- Kept explicit tab closure separate from application shutdown so closing the host preserves open tabs without adding them to closed-tab history.
+- Prevented open tabs and duplicate session identities from remaining in closed-tab history.
+- Added unit and isolated Electron integration coverage for shortcut dispatch, close/restore cycles, and restoration after a host restart.

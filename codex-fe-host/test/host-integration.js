@@ -263,11 +263,48 @@ async function run() {
 	assert.equal(closeResponse.tab_id, powerShellTabId);
 	const stateAfterClose = await waitUntil("closed tab removal", () => {
 		const state = loadJson(stateFile);
-		return state.tabs.length === 1 ? state : null;
+		return state.tabs.length === 1 && state.closedTabs.length === 1
+			? state
+			: null;
 	});
 	assert.deepEqual(
 		stateAfterClose.tabs.map((tab) => tab.tabId),
 		[firstResponse.tab_id],
+	);
+	assert.equal(stateAfterClose.closedTabs[0].tabId, powerShellTabId);
+
+	const firstRestoreResponse = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/restore-shortcut",
+	);
+	assert.equal(firstRestoreResponse.ok, true);
+	const stateAfterFirstRestore = await waitUntil(
+		"first Ctrl+Shift+T restoration",
+		() => {
+			const state = loadJson(stateFile);
+			return state.tabs.length === 2 && state.closedTabs.length === 0
+				? state
+				: null;
+		},
+	);
+	assert.equal(stateAfterFirstRestore.tabs.at(-1).tabId, powerShellTabId);
+
+	const secondCloseResponse = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/close-active",
+	);
+	assert.equal(secondCloseResponse.ok, true);
+	assert.equal(secondCloseResponse.tab_id, powerShellTabId);
+	const stateBeforeRestart = await waitUntil(
+		"reclosed PowerShell tab persistence",
+		() => {
+			const state = loadJson(stateFile);
+			return state.tabs.length === 1 && state.closedTabs.length === 1
+				? state
+				: null;
+		},
 	);
 
 	await stopHost();
@@ -279,10 +316,30 @@ async function run() {
 	const restoredState = loadJson(stateFile);
 	assert.deepEqual(
 		restoredState.tabs.map((tab) => tab.tabId),
-		stateAfterClose.tabs.map((tab) => tab.tabId),
+		stateBeforeRestart.tabs.map((tab) => tab.tabId),
 	);
+	assert.deepEqual(
+		restoredState.closedTabs.map((tab) => tab.tabId),
+		[powerShellTabId],
+	);
+	const secondRestoreResponse = await hostRequest(
+		secondDiscovery,
+		"POST",
+		"/test/restore-shortcut",
+	);
+	assert.equal(secondRestoreResponse.ok, true);
+	const finalState = await waitUntil(
+		"persisted Ctrl+Shift+T restoration",
+		() => {
+			const state = loadJson(stateFile);
+			return state.tabs.length === 2 && state.closedTabs.length === 0
+				? state
+				: null;
+		},
+	);
+	assert.equal(finalState.tabs.at(-1).tabId, powerShellTabId);
 	console.log(
-		`Integration passed: restored ${restoredState.tabs.length} tabs after host restart.`,
+		`Integration passed: reopened ${finalState.tabs.length - restoredState.tabs.length} closed tab after host restart.`,
 	);
 }
 

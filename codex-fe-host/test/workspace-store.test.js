@@ -77,3 +77,58 @@ test("legacy Python state is archived without importing tabs", () => {
 		fs.rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+test("closed tab history is bounded, unique, and excludes open tabs", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-closed-"));
+	try {
+		const filePath = path.join(directory, "tabs.json");
+		const store = new WorkspaceStore(filePath);
+		const workspace = createEmptyWorkspace();
+		workspace.tabs = [
+			{
+				tabId: "open-session",
+				kind: "session",
+				sessionId: "open-session-id",
+				cwd: directory,
+				title: "Open",
+				model: "",
+				createdAt: "2026-07-29T10:00:00.000Z",
+			},
+		];
+		workspace.closedTabs = [
+			{ ...workspace.tabs[0], tabId: "stale-open-session" },
+			...Array.from({ length: 55 }, (_value, index) => ({
+				tabId: `closed-${index}`,
+				kind: "powershell",
+				sessionId: "",
+				cwd: directory,
+				title: `PowerShell ${index}`,
+				model: "",
+				createdAt: `2026-07-29T10:${String(index).padStart(2, "0")}:00.000Z`,
+			})),
+			{
+				tabId: "closed-54",
+				kind: "powershell",
+				sessionId: "",
+				cwd: directory,
+				title: "PowerShell 54 newest",
+				model: "",
+				createdAt: "2026-07-29T11:00:00.000Z",
+			},
+		];
+		workspace.activeTabId = "open-session";
+		store.save(workspace);
+
+		const loaded = store.load();
+		assert.equal(loaded.closedTabs.length, 50);
+		assert.equal(loaded.closedTabs[0].tabId, "closed-5");
+		assert.equal(loaded.closedTabs.at(-1).tabId, "closed-54");
+		assert.equal(loaded.closedTabs.at(-1).title, "PowerShell 54 newest");
+		assert.equal(
+			loaded.closedTabs.some((tab) => tab.sessionId === "open-session-id"),
+			false,
+		);
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});
