@@ -15,3 +15,5 @@ Selecting a session that is already open focuses its existing tab. Use the `+` b
 When managed Codex exits but leaves the tab at its PowerShell prompt, selecting that session again resumes Codex inside the existing tab rather than creating a duplicate or doing nothing.
 
 Press `Ctrl+Shift+T` to reopen the most recently closed tab. Repeated presses restore older tabs in reverse close order. The 50 most recently closed tabs are retained across host restarts.
+
+The orange `PS` tab marker becomes a Braille spinner while that tab's terminal is producing output, then returns to `PS` after the output becomes idle.

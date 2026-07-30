@@ -54,3 +54,23 @@ test("new tab button follows the tabs in their shared overflow strip", () => {
 	assert.match(styles, /\.tab-strip\s*\{[^}]*overflow-x:\s*auto;/s);
 	assert.match(styles, /\.tabs\s*\{[^}]*flex:\s*0 0 auto;/s);
 });
+
+test("PTY output drives one shared tab activity spinner", () => {
+	const renderer = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "renderer.js"),
+		"utf8",
+	);
+	const styles = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "styles.css"),
+		"utf8",
+	);
+
+	assert.match(renderer, /const ACTIVITY_IDLE_MS = 1200;/);
+	assert.match(renderer, /const ACTIVITY_FRAMES = \[/);
+	assert.match(renderer, /let activityAnimationTimer = null;/);
+	assert.match(
+		renderer,
+		/onData\(\(tabId, data\) => \{[\s\S]*noteTabOutput\(tabId\);[\s\S]*\}\);/,
+	);
+	assert.match(styles, /\.shell-mark\s*\{[^}]*width:\s*20px;/s);
+});

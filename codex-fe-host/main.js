@@ -566,6 +566,33 @@ function startCommandServer() {
 		}
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			["GET", "POST"].includes(request.method) &&
+			request.url === "/test/activity-indicator"
+		) {
+			await waitForRendererLoad();
+			if (request.method === "POST") {
+				mainWindow.webContents.send(
+					"terminal:data",
+					workspace.activeTabId,
+					"",
+				);
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			const indicator = await mainWindow.webContents.executeJavaScript(`
+				(() => {
+					const activeTab = document.querySelector(".tab.active");
+					const mark = activeTab?.querySelector(".shell-mark");
+					return {
+						busy: activeTab?.getAttribute("aria-busy") === "true",
+						text: mark?.textContent || "",
+					};
+				})()
+			`);
+			sendJson(response, 200, { ok: true, ...indicator });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			request.method === "POST" &&
 			request.url === "/test/close-active"
 		) {

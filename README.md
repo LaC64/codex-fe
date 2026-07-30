@@ -111,6 +111,7 @@ codex-fe-host\start.cmd
 - `Ctrl+W` closes the active tab.
 - `Ctrl+C` copies selected terminal text; with no selection it still interrupts the running command.
 - `Ctrl+V` pastes clipboard text through the active terminal.
+- A tab's orange `PS` marker becomes a Braille spinner while its terminal is producing output.
 - New chats begin as pending tabs and are updated with their generated Codex session ID once the session JSONL appears.
 - Terminal scrollback is not persisted; the Codex conversation itself is resumed by session ID.
 

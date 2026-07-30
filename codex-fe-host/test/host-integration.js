@@ -237,6 +237,21 @@ async function run() {
 		fs.readdirSync(testHome).filter((name) => name.includes(".legacy-")).length,
 		2,
 	);
+	const busyIndicator = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/activity-indicator",
+	);
+	assert.equal(busyIndicator.busy, true);
+	assert.notEqual(busyIndicator.text, "PS");
+	await delay(1400);
+	const idleIndicator = await hostRequest(
+		firstDiscovery,
+		"GET",
+		"/test/activity-indicator",
+	);
+	assert.equal(idleIndicator.busy, false);
+	assert.equal(idleIndicator.text, "PS");
 	const powerShellResponse = await hostRequest(
 		firstDiscovery,
 		"POST",

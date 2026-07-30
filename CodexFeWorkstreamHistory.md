@@ -55,3 +55,9 @@
 
 - Moved the new-PowerShell `+` button directly after the last visible tab instead of leaving it at the far-right edge of the tab region.
 - Kept tabs and the add button in one horizontal overflow strip so the control follows the final tab when the strip scrolls.
+
+## 2026-07-29 - Tab Activity Spinner
+
+- Replaced each tab's orange `PS` marker with an animated Braille spinner while its PTY produces output.
+- Kept activity as renderer-only state keyed by stable tab ID, with one shared animation timer and a 1.2-second idle timeout.
+- Fixed the marker width so spinner frame changes do not shift tab titles.

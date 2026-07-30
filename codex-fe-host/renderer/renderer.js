@@ -4,8 +4,26 @@ const terminalsElement = document.getElementById("terminals");
 const statusElement = document.getElementById("status");
 const emptyElement = document.getElementById("empty");
 const terminalViews = new Map();
+const tabMarks = new Map();
+const outputActivityByTabId = new Map();
+
+const ACTIVITY_IDLE_MS = 1200;
+const ACTIVITY_FRAME_MS = 80;
+const ACTIVITY_FRAMES = [
+	"\u280b",
+	"\u2819",
+	"\u2839",
+	"\u2838",
+	"\u283c",
+	"\u2834",
+	"\u2826",
+	"\u2827",
+	"\u2807",
+	"\u280f",
+];
 
 let workspace = { tabs: [], activeTabId: null };
+let activityAnimationTimer = null;
 
 window.addEventListener(
 	"keydown",
@@ -24,6 +42,51 @@ window.addEventListener(
 	},
 	true,
 );
+
+function paintActivityIndicators() {
+	const now = Date.now();
+	for (const [tabId, lastOutputAt] of outputActivityByTabId) {
+		if (now - lastOutputAt >= ACTIVITY_IDLE_MS) {
+			outputActivityByTabId.delete(tabId);
+		}
+	}
+
+	const frame = ACTIVITY_FRAMES[
+		Math.floor(now / ACTIVITY_FRAME_MS) % ACTIVITY_FRAMES.length
+	];
+	for (const [tabId, mark] of tabMarks) {
+		const busy = outputActivityByTabId.has(tabId);
+		mark.textContent = busy ? frame : "PS";
+		mark.classList.toggle("busy", busy);
+		mark.parentElement.setAttribute("aria-busy", String(busy));
+	}
+	return outputActivityByTabId.size > 0;
+}
+
+function scheduleActivityAnimation() {
+	if (
+		activityAnimationTimer !== null ||
+		outputActivityByTabId.size === 0
+	) {
+		return;
+	}
+	const animate = () => {
+		activityAnimationTimer = null;
+		if (paintActivityIndicators()) {
+			activityAnimationTimer = window.setTimeout(
+				animate,
+				ACTIVITY_FRAME_MS,
+			);
+		}
+	};
+	activityAnimationTimer = window.setTimeout(animate, ACTIVITY_FRAME_MS);
+}
+
+function noteTabOutput(tabId) {
+	outputActivityByTabId.set(tabId, Date.now());
+	paintActivityIndicators();
+	scheduleActivityAnimation();
+}
 
 function createTerminalView(tab) {
 	const panel = document.createElement("section");
@@ -84,6 +147,7 @@ function createTerminalView(tab) {
 			view.attached = true;
 			if (state.backlog) {
 				terminal.write(state.backlog);
+				noteTabOutput(tab.tabId);
 			}
 			if (state.exited) {
 				markExited(tab.tabId, state.exitCode);
@@ -104,10 +168,16 @@ function destroyTerminalView(tabId) {
 	view.terminal.dispose();
 	view.panel.remove();
 	terminalViews.delete(tabId);
+	outputActivityByTabId.delete(tabId);
+	if (outputActivityByTabId.size === 0 && activityAnimationTimer !== null) {
+		window.clearTimeout(activityAnimationTimer);
+		activityAnimationTimer = null;
+	}
 }
 
 function renderTabs() {
 	tabsElement.replaceChildren();
+	tabMarks.clear();
 	for (const tab of workspace.tabs) {
 		const tabButton = document.createElement("div");
 		tabButton.className = `tab${tab.tabId === workspace.activeTabId ? " active" : ""}`;
@@ -119,6 +189,8 @@ function renderTabs() {
 		const mark = document.createElement("span");
 		mark.className = "shell-mark";
 		mark.textContent = "PS";
+		mark.setAttribute("aria-hidden", "true");
+		tabMarks.set(tab.tabId, mark);
 		const title = document.createElement("span");
 		title.className = "tab-title";
 		title.textContent = tab.title;
@@ -147,6 +219,8 @@ function renderTabs() {
 		});
 		tabsElement.appendChild(tabButton);
 	}
+	paintActivityIndicators();
+	scheduleActivityAnimation();
 }
 
 function syncWorkspace(nextWorkspace) {
@@ -205,7 +279,14 @@ function markExited(tabId, exitCode) {
 }
 
 window.hostAPI.onWorkspaceChanged(syncWorkspace);
-window.hostAPI.onData((tabId, data) => terminalViews.get(tabId)?.terminal.write(data));
+window.hostAPI.onData((tabId, data) => {
+	const view = terminalViews.get(tabId);
+	if (!view) {
+		return;
+	}
+	view.terminal.write(data);
+	noteTabOutput(tabId);
+});
 window.hostAPI.onExit(markExited);
 addTabElement.addEventListener("click", () => window.hostAPI.newPowerShellTab());
 new ResizeObserver(fitActiveTerminal).observe(terminalsElement);

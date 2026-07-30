@@ -94,10 +94,12 @@ body {
 }
 
 .shell-mark {
+	width: 20px;
 	flex: 0 0 auto;
 	color: var(--orange);
 	font-family: "Cascadia Mono", Consolas, monospace;
 	font-weight: 700;
+	text-align: center;
 }
 
 .tab-title {
