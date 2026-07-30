@@ -132,3 +132,22 @@ test("closed tab history is bounded, unique, and excludes open tabs", () => {
 		fs.rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+test("window maximized state persists and defaults off for older workspaces", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-window-"));
+	try {
+		const filePath = path.join(directory, "tabs.json");
+		const store = new WorkspaceStore(filePath);
+		const olderWorkspace = createEmptyWorkspace();
+		delete olderWorkspace.windowState;
+		fs.writeFileSync(filePath, JSON.stringify(olderWorkspace), "utf8");
+		assert.equal(store.load().windowState.maximized, false);
+
+		const maximizedWorkspace = store.load();
+		maximizedWorkspace.windowState.maximized = true;
+		store.save(maximizedWorkspace);
+		assert.equal(store.load().windowState.maximized, true);
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});

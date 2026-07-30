@@ -10,6 +10,9 @@ function createEmptyWorkspace() {
 		tabs: [],
 		closedTabs: [],
 		activeTabId: null,
+		windowState: {
+			maximized: false,
+		},
 		updatedAt: new Date().toISOString(),
 	};
 }
@@ -113,6 +116,9 @@ function normalizeWorkspace(value) {
 		activeTabId: tabs.some((tab) => tab.tabId === requestedActiveId)
 			? requestedActiveId
 			: tabs[0]?.tabId || null,
+		windowState: {
+			maximized: value.windowState?.maximized === true,
+		},
 		updatedAt: String(value.updatedAt || "").trim() || new Date().toISOString(),
 	};
 }

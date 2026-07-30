@@ -111,6 +111,7 @@ function makePowerShellCommand(tab, exitToken) {
 function createWindow() {
 	rendererLoaded = false;
 	mainWindow = new BrowserWindow({
+		show: false,
 		width: 1280,
 		height: 800,
 		minWidth: 720,
@@ -126,6 +127,17 @@ function createWindow() {
 	});
 
 	mainWindow.setMenuBarVisibility(false);
+	mainWindow.on("maximize", () => persistWindowMaximized(true));
+	mainWindow.on("unmaximize", () => persistWindowMaximized(false));
+	mainWindow.on("close", () => {
+		persistWindowMaximized(mainWindow.isMaximized());
+	});
+	if (workspace.windowState.maximized) {
+		mainWindow.maximize();
+	}
+	mainWindow.once("ready-to-show", () => {
+		mainWindow.show();
+	});
 	mainWindow.webContents.once("did-finish-load", () => {
 		rendererLoaded = true;
 	});
@@ -159,10 +171,22 @@ function notifyWorkspaceChanged() {
 	}
 }
 
-function commitWorkspace() {
+function saveWorkspace() {
 	workspace.updatedAt = new Date().toISOString();
 	workspaceStore.save(workspace);
+}
+
+function commitWorkspace() {
+	saveWorkspace();
 	notifyWorkspaceChanged();
+}
+
+function persistWindowMaximized(maximized) {
+	if (workspace.windowState.maximized === maximized) {
+		return;
+	}
+	workspace.windowState.maximized = maximized;
+	saveWorkspace();
 }
 
 function focusWindow() {
@@ -626,6 +650,22 @@ function startCommandServer() {
 				})()
 			`);
 			sendJson(response, 200, { ok: true, ...indicator });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			["GET", "POST"].includes(request.method) &&
+			request.url === "/test/window-maximized"
+		) {
+			if (request.method === "POST") {
+				mainWindow.maximize();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			sendJson(response, 200, {
+				ok: true,
+				maximized: mainWindow.isMaximized(),
+				persisted: workspace.windowState.maximized,
+			});
 			return;
 		}
 		if (

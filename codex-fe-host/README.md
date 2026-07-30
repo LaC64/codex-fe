@@ -19,3 +19,5 @@ Press `Ctrl+Shift+T` to reopen the most recently closed tab. Repeated presses re
 The orange `PS` tab marker becomes a Braille spinner while that tab's terminal is producing output, then returns to `PS` after the output becomes idle.
 
 Tabs grow up to `520px` wide and wrap onto additional header rows instead of showing a horizontal scrollbar.
+
+The host persists whether its window is maximized and restores that state the next time it starts.

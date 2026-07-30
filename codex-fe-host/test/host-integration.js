@@ -331,6 +331,17 @@ async function run() {
 				: null;
 		},
 	);
+	const maximizeResponse = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/window-maximized",
+	);
+	assert.equal(maximizeResponse.maximized, true);
+	assert.equal(maximizeResponse.persisted, true);
+	await waitUntil("persisted maximized window state", () => {
+		const state = loadJson(stateFile);
+		return state.windowState?.maximized === true ? state : null;
+	});
 
 	await stopHost();
 	assert.equal(fs.existsSync(discoveryFile), false);
@@ -338,6 +349,13 @@ async function run() {
 	const secondDiscovery = await waitForDiscovery();
 	const health = await hostRequest(secondDiscovery, "GET", "/health");
 	assert.equal(health.ok, true);
+	const restoredWindowState = await hostRequest(
+		secondDiscovery,
+		"GET",
+		"/test/window-maximized",
+	);
+	assert.equal(restoredWindowState.maximized, true);
+	assert.equal(restoredWindowState.persisted, true);
 	const restoredState = loadJson(stateFile);
 	assert.deepEqual(
 		restoredState.tabs.map((tab) => tab.tabId),

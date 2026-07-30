@@ -107,6 +107,7 @@ codex-fe-host\start.cmd
 - `Ctrl+Shift+T` reopens the most recently closed tab. Repeated presses restore older tabs in reverse close order.
 - Closed-tab history persists across host restarts and retains the 50 most recently closed tabs.
 - Closing the host application preserves its remaining tab list.
+- Closing a maximized host remembers that state and restores the next host window maximized.
 - Reopening the host resumes every saved Codex session in the same order.
 - `Ctrl+Tab` and `Ctrl+Shift+Tab` switch tabs.
 - `Ctrl+W` closes the active tab.

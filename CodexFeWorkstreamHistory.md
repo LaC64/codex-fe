@@ -67,3 +67,9 @@
 - Doubled the maximum tab width from `260px` to `520px` so longer session names truncate less often.
 - Replaced horizontal tab scrolling with fixed-height wrapped rows and made the terminal area account for the resulting header height.
 - Kept the new-tab `+` button directly after the final tab across wrapped rows.
+
+## 2026-07-30 - Maximized Window Restoration
+
+- Added the host window's maximized flag to the canonical `codex-fe-tabs.json` workspace with backward-compatible normalization.
+- Persisted maximize/unmaximize transitions and captured the final state again when the host closes.
+- Restored the maximized state before showing the host and added live restart coverage for the complete save/restore path.
