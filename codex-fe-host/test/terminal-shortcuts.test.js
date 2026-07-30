@@ -36,3 +36,21 @@ test("Ctrl+Shift+T restores through the host workspace", () => {
 	assert.match(renderer, /event\.key\.toLowerCase\(\) === "t"/);
 	assert.match(renderer, /window\.hostAPI\.restoreClosedTab\(\)/);
 });
+
+test("new tab button follows the tabs in their shared overflow strip", () => {
+	const html = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "index.html"),
+		"utf8",
+	);
+	const styles = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "styles.css"),
+		"utf8",
+	);
+
+	assert.match(
+		html,
+		/class="tab-strip">\s*<div class="tabs" id="tabs"><\/div>\s*<button class="tab-add"/,
+	);
+	assert.match(styles, /\.tab-strip\s*\{[^}]*overflow-x:\s*auto;/s);
+	assert.match(styles, /\.tabs\s*\{[^}]*flex:\s*0 0 auto;/s);
+});

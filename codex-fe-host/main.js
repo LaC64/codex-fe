@@ -35,6 +35,7 @@ let workspace = createEmptyWorkspace();
 let codexHome = null;
 let shuttingDown = false;
 let resolverTimer = null;
+let rendererLoaded = false;
 const runtimes = new Map();
 
 function argumentValue(name) {
@@ -108,6 +109,7 @@ function makePowerShellCommand(tab, exitToken) {
 }
 
 function createWindow() {
+	rendererLoaded = false;
 	mainWindow = new BrowserWindow({
 		width: 1280,
 		height: 800,
@@ -124,9 +126,22 @@ function createWindow() {
 	});
 
 	mainWindow.setMenuBarVisibility(false);
+	mainWindow.webContents.once("did-finish-load", () => {
+		rendererLoaded = true;
+	});
 	mainWindow.loadFile("renderer/index.html");
 	mainWindow.on("closed", () => {
+		rendererLoaded = false;
 		mainWindow = null;
+	});
+}
+
+function waitForRendererLoad() {
+	if (rendererLoaded) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		mainWindow.webContents.once("did-finish-load", resolve);
 	});
 }
 
@@ -505,6 +520,7 @@ function startCommandServer() {
 			request.method === "POST" &&
 			request.url === "/test/restore-shortcut"
 		) {
+			await waitForRendererLoad();
 			mainWindow.webContents.sendInputEvent({
 				type: "keyDown",
 				keyCode: "T",
@@ -523,17 +539,29 @@ function startCommandServer() {
 			request.method === "POST" &&
 			request.url === "/test/click-add"
 		) {
-			const clicked = await mainWindow.webContents.executeJavaScript(`
+			await waitForRendererLoad();
+			const result = await mainWindow.webContents.executeJavaScript(`
 				(() => {
 					const button = document.getElementById("tab-add");
 					if (!button) {
-						return false;
+						return { clicked: false, tabGap: null };
 					}
+					const tabs = [...document.querySelectorAll(".tab")];
+					const lastTab = tabs.at(-1);
+					const tabGap = lastTab
+						? Math.abs(
+							button.getBoundingClientRect().left -
+								lastTab.getBoundingClientRect().right
+						)
+						: null;
 					button.click();
-					return true;
+					return { clicked: true, tabGap };
 				})()
 			`);
-			sendJson(response, 200, { ok: clicked });
+			sendJson(response, 200, {
+				ok: result.clicked,
+				tab_gap: result.tabGap,
+			});
 			return;
 		}
 		if (

@@ -50,3 +50,8 @@
 - Kept explicit tab closure separate from application shutdown so closing the host preserves open tabs without adding them to closed-tab history.
 - Prevented open tabs and duplicate session identities from remaining in closed-tab history.
 - Added unit and isolated Electron integration coverage for shortcut dispatch, close/restore cycles, and restoration after a host restart.
+
+## 2026-07-29 - Tab Add Button Placement
+
+- Moved the new-PowerShell `+` button directly after the last visible tab instead of leaving it at the far-right edge of the tab region.
+- Kept tabs and the add button in one horizontal overflow strip so the control follows the final tab when the strip scrolls.

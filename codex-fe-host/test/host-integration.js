@@ -243,6 +243,10 @@ async function run() {
 		"/test/click-add",
 	);
 	assert.equal(powerShellResponse.ok, true);
+	assert.ok(
+		powerShellResponse.tab_gap <= 1,
+		`Expected + button after final tab, found ${powerShellResponse.tab_gap}px gap.`,
+	);
 	const stateWithPowerShell = await waitUntil("persisted PowerShell tab", () => {
 		const state = loadJson(stateFile);
 		return state.tabs.length === 2 ? state : null;
