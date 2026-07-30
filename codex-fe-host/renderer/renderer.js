@@ -219,6 +219,7 @@ function renderTabs() {
 		});
 		tabsElement.appendChild(tabButton);
 	}
+	tabsElement.appendChild(addTabElement);
 	paintActivityIndicators();
 	scheduleActivityAnimation();
 }

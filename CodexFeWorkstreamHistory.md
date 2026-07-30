@@ -61,3 +61,9 @@
 - Replaced each tab's orange `PS` marker with an animated Braille spinner while its PTY produces output.
 - Kept activity as renderer-only state keyed by stable tab ID, with one shared animation timer and a 1.2-second idle timeout.
 - Fixed the marker width so spinner frame changes do not shift tab titles.
+
+## 2026-07-30 - Wrapping Tab Rows
+
+- Doubled the maximum tab width from `260px` to `520px` so longer session names truncate less often.
+- Replaced horizontal tab scrolling with fixed-height wrapped rows and made the terminal area account for the resulting header height.
+- Kept the new-tab `+` button directly after the final tab across wrapped rows.

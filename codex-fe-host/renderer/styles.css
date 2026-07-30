@@ -6,6 +6,7 @@
 	--orange: #f28c28;
 	--text: #e7e7e7;
 	--muted: #999999;
+	--tab-row-height: 42px;
 }
 
 * {
@@ -25,12 +26,13 @@ body {
 
 body {
 	display: grid;
-	grid-template-rows: 42px minmax(0, 1fr);
+	grid-template-rows: auto minmax(0, 1fr);
 }
 
 .tab-bar {
 	display: flex;
 	min-width: 0;
+	min-height: var(--tab-row-height);
 	align-items: stretch;
 	border-bottom: 1px solid var(--border);
 	background: var(--surface);
@@ -39,19 +41,15 @@ body {
 .tab-strip {
 	display: flex;
 	flex: 1 1 auto;
+	flex-wrap: wrap;
+	align-content: flex-start;
 	min-width: 0;
-	overflow-x: auto;
-	overflow-y: hidden;
-	scrollbar-width: thin;
-}
-
-.tabs {
-	display: flex;
-	flex: 0 0 auto;
+	overflow: hidden;
 }
 
 .tab-add {
 	width: 42px;
+	height: var(--tab-row-height);
 	flex: 0 0 42px;
 	border: 0;
 	border-right: 1px solid var(--border);
@@ -71,8 +69,9 @@ body {
 
 .tab {
 	display: flex;
+	height: var(--tab-row-height);
 	min-width: 150px;
-	max-width: 260px;
+	max-width: 520px;
 	align-items: center;
 	gap: 8px;
 	padding: 0 8px 0 12px;
@@ -131,11 +130,13 @@ body {
 
 .status {
 	margin-left: auto;
-	align-self: center;
+	align-self: flex-start;
 	flex: 0 0 auto;
+	height: var(--tab-row-height);
 	padding: 0 14px;
 	color: var(--muted);
 	font-size: 12px;
+	line-height: var(--tab-row-height);
 }
 
 #terminals {

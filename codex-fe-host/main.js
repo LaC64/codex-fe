@@ -554,13 +554,50 @@ function startCommandServer() {
 								lastTab.getBoundingClientRect().right
 						)
 						: null;
+					const strip = button.parentElement;
+					const probe = strip.cloneNode(true);
+					probe.removeAttribute("id");
+					probe.querySelectorAll("[id]").forEach((element) =>
+						element.removeAttribute("id")
+					);
+					probe.style.cssText =
+						"position:absolute;visibility:hidden;width:380px;" +
+						"left:-10000px;top:0;flex:none;";
+					const templateTab = probe.querySelector(".tab");
+					for (let index = 0; index < 3; index += 1) {
+						probe.insertBefore(
+							templateTab.cloneNode(true),
+							probe.querySelector(".tab-add")
+						);
+					}
+					document.body.appendChild(probe);
+					const wrapRows = new Set(
+						[...probe.querySelectorAll(".tab, .tab-add")].map(
+							(element) => element.offsetTop
+						)
+					).size;
+					const horizontalOverflow =
+						probe.scrollWidth > probe.clientWidth;
+					const maxTabWidth = lastTab
+						? getComputedStyle(lastTab).maxWidth
+						: "";
+					probe.remove();
 					button.click();
-					return { clicked: true, tabGap };
+					return {
+						clicked: true,
+						horizontalOverflow,
+						maxTabWidth,
+						tabGap,
+						wrapRows,
+					};
 				})()
 			`);
 			sendJson(response, 200, {
+				horizontal_overflow: result.horizontalOverflow,
+				max_tab_width: result.maxTabWidth,
 				ok: result.clicked,
 				tab_gap: result.tabGap,
+				wrap_rows: result.wrapRows,
 			});
 			return;
 		}

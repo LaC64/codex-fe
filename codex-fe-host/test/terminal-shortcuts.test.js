@@ -37,9 +37,13 @@ test("Ctrl+Shift+T restores through the host workspace", () => {
 	assert.match(renderer, /window\.hostAPI\.restoreClosedTab\(\)/);
 });
 
-test("new tab button follows the tabs in their shared overflow strip", () => {
+test("tabs and new tab button share one wrapping strip", () => {
 	const html = fs.readFileSync(
 		path.resolve(__dirname, "..", "renderer", "index.html"),
+		"utf8",
+	);
+	const renderer = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "renderer.js"),
 		"utf8",
 	);
 	const styles = fs.readFileSync(
@@ -49,10 +53,13 @@ test("new tab button follows the tabs in their shared overflow strip", () => {
 
 	assert.match(
 		html,
-		/class="tab-strip">\s*<div class="tabs" id="tabs"><\/div>\s*<button class="tab-add"/,
+		/class="tab-strip" id="tabs">\s*<button class="tab-add"/,
 	);
-	assert.match(styles, /\.tab-strip\s*\{[^}]*overflow-x:\s*auto;/s);
-	assert.match(styles, /\.tabs\s*\{[^}]*flex:\s*0 0 auto;/s);
+	assert.match(renderer, /tabsElement\.appendChild\(addTabElement\);/);
+	assert.match(styles, /\.tab-strip\s*\{[^}]*flex-wrap:\s*wrap;/s);
+	assert.doesNotMatch(styles, /overflow-x:\s*auto;/);
+	assert.match(styles, /\.tab\s*\{[^}]*max-width:\s*520px;/s);
+	assert.match(styles, /grid-template-rows:\s*auto minmax\(0, 1fr\);/);
 });
 
 test("PTY output drives one shared tab activity spinner", () => {

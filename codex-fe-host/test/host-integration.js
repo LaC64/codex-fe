@@ -262,6 +262,12 @@ async function run() {
 		powerShellResponse.tab_gap <= 1,
 		`Expected + button after final tab, found ${powerShellResponse.tab_gap}px gap.`,
 	);
+	assert.equal(powerShellResponse.max_tab_width, "520px");
+	assert.ok(
+		powerShellResponse.wrap_rows > 1,
+		"Expected constrained tabs to wrap into multiple rows.",
+	);
+	assert.equal(powerShellResponse.horizontal_overflow, false);
 	const stateWithPowerShell = await waitUntil("persisted PowerShell tab", () => {
 		const state = loadJson(stateFile);
 		return state.tabs.length === 2 ? state : null;
