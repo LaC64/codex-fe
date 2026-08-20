@@ -20,4 +20,6 @@ The orange `PS` tab marker becomes a Braille spinner while that tab's terminal i
 
 Tabs grow up to `520px` wide and wrap onto additional header rows instead of showing a horizontal scrollbar.
 
+Terminal padding is applied to xterm itself so its fit calculation keeps the final PowerShell row visible as the tab header grows.
+
 The host persists whether its window is maximized and restores that state the next time it starts.

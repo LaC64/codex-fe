@@ -81,3 +81,13 @@ test("PTY output drives one shared tab activity spinner", () => {
 	);
 	assert.match(styles, /\.shell-mark\s*\{[^}]*width:\s*20px;/s);
 });
+
+test("xterm owns terminal padding so FitAddon subtracts it", () => {
+	const styles = fs.readFileSync(
+		path.resolve(__dirname, "..", "renderer", "styles.css"),
+		"utf8",
+	);
+
+	assert.doesNotMatch(styles, /\.terminal-panel\s*\{[^}]*padding:/s);
+	assert.match(styles, /\.xterm\s*\{[^}]*padding:\s*9px 10px;/s);
+});

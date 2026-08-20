@@ -73,3 +73,9 @@
 - Added the host window's maximized flag to the canonical `codex-fe-tabs.json` workspace with backward-compatible normalization.
 - Persisted maximize/unmaximize transitions and captured the final state again when the host closes.
 - Restored the maximized state before showing the host and added live restart coverage for the complete save/restore path.
+
+## 2026-08-20 - Wrapped Header Terminal Fit
+
+- Fixed the bottom terminal row being clipped as wrapped tab rows reduced the terminal viewport height.
+- Moved terminal padding from the FitAddon parent onto xterm itself so the padding is included in row-count calculations.
+- Preserved the existing visual inset while keeping regular PowerShell prompts and Codex output fully visible.

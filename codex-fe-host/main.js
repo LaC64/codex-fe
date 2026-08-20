@@ -627,6 +627,41 @@ function startCommandServer() {
 		}
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "GET" &&
+			request.url === "/test/terminal-geometry"
+		) {
+			await waitForRendererLoad();
+			const geometry = await mainWindow.webContents.executeJavaScript(`
+				(() => {
+					const panel = document.querySelector(".terminal-panel.active");
+					const terminal = panel?.querySelector(".xterm");
+					const screen = terminal?.querySelector(".xterm-screen");
+					if (!panel || !terminal || !screen) {
+						return { ready: false };
+					}
+					const panelStyle = getComputedStyle(panel);
+					const terminalStyle = getComputedStyle(terminal);
+					const terminalRect = terminal.getBoundingClientRect();
+					const screenRect = screen.getBoundingClientRect();
+					const paddingBottom = parseFloat(terminalStyle.paddingBottom);
+					return {
+						ready: true,
+						panelPaddingBottom: parseFloat(panelStyle.paddingBottom),
+						panelPaddingTop: parseFloat(panelStyle.paddingTop),
+						screenBottomOverflow: Math.max(
+							0,
+							screenRect.bottom - (terminalRect.bottom - paddingBottom)
+						),
+						terminalPaddingBottom: paddingBottom,
+						terminalPaddingTop: parseFloat(terminalStyle.paddingTop),
+					};
+				})()
+			`);
+			sendJson(response, 200, { ok: true, ...geometry });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			["GET", "POST"].includes(request.method) &&
 			request.url === "/test/activity-indicator"
 		) {

@@ -103,6 +103,7 @@ codex-fe-host\start.cmd
 - If Codex has exited to that tab's PowerShell prompt, selecting the session resumes Codex again in the same tab.
 - The `+` button opens a standalone PowerShell tab without starting Codex.
 - Tabs can grow to `520px` wide and wrap into additional header rows instead of using horizontal scrolling.
+- Terminal rows remain fully visible as wrapped tab rows change the available terminal height.
 - Closing one tab removes it immediately from the saved workspace.
 - `Ctrl+Shift+T` reopens the most recently closed tab. Repeated presses restore older tabs in reverse close order.
 - Closed-tab history persists across host restarts and retains the 50 most recently closed tabs.

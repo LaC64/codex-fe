@@ -279,6 +279,25 @@ async function run() {
 	assert.equal(stateWithPowerShell.tabs[1].title, "PowerShell");
 	assert.equal(stateWithPowerShell.tabs[1].cwd, os.homedir());
 	const powerShellTabId = stateWithPowerShell.tabs[1].tabId;
+	const terminalGeometry = await waitUntil(
+		"fitted PowerShell terminal geometry",
+		async () => {
+			const geometry = await hostRequest(
+				firstDiscovery,
+				"GET",
+				"/test/terminal-geometry",
+			);
+			return geometry.ready ? geometry : null;
+		},
+	);
+	assert.equal(terminalGeometry.panelPaddingTop, 0);
+	assert.equal(terminalGeometry.panelPaddingBottom, 0);
+	assert.equal(terminalGeometry.terminalPaddingTop, 9);
+	assert.equal(terminalGeometry.terminalPaddingBottom, 9);
+	assert.ok(
+		terminalGeometry.screenBottomOverflow <= 1,
+		`Expected the final terminal row to fit; overflow was ${terminalGeometry.screenBottomOverflow}px.`,
+	);
 	const closeResponse = await hostRequest(
 		firstDiscovery,
 		"POST",
