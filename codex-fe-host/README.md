@@ -23,3 +23,5 @@ Tabs grow up to `520px` wide and wrap onto additional header rows instead of sho
 Terminal padding is applied to xterm itself so its fit calculation keeps the final PowerShell row visible as the tab header grows.
 
 The host persists whether its window is maximized and restores that state the next time it starts.
+
+New and resumed Codex sessions use full-trust mode and disable the alternate screen with `--dangerously-bypass-approvals-and-sandbox --no-alt-screen`.

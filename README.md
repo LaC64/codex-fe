@@ -122,4 +122,4 @@ On the first host launch, the removed Python dashboard files `codex-fe-workspace
 
 Favorites remain in `~/.codex/session_favorites.json`. Cached session metadata remains in `~/.codex/codex-fe-session-details-cache.json`.
 
-Codex launches use `--dangerously-bypass-approvals-and-sandbox`.
+New and resumed Codex sessions launch with `--dangerously-bypass-approvals-and-sandbox --no-alt-screen`.

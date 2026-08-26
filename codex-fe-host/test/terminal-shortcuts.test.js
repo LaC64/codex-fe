@@ -91,3 +91,20 @@ test("xterm owns terminal padding so FitAddon subtracts it", () => {
 	assert.doesNotMatch(styles, /\.terminal-panel\s*\{[^}]*padding:/s);
 	assert.match(styles, /\.xterm\s*\{[^}]*padding:\s*9px 10px;/s);
 });
+
+test("new and resumed Codex sessions share full-trust non-alt-screen args", () => {
+	const main = fs.readFileSync(
+		path.resolve(__dirname, "..", "main.js"),
+		"utf8",
+	);
+
+	assert.match(
+		main,
+		/const CODEX_LAUNCH_ARGS = \[\s*"--dangerously-bypass-approvals-and-sandbox",\s*"--no-alt-screen",\s*\];/,
+	);
+	assert.match(
+		main,
+		/\["-C", tab\.cwd, "resume", tab\.sessionId, \.\.\.CODEX_LAUNCH_ARGS\]/,
+	);
+	assert.match(main, /\["-C", tab\.cwd, \.\.\.CODEX_LAUNCH_ARGS\]/);
+});

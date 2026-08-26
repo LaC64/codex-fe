@@ -22,7 +22,10 @@ const {
 	flushMarkerRemainder,
 } = require("./runtime-output");
 
-const FULL_TRUST_ARGS = ["--dangerously-bypass-approvals-and-sandbox"];
+const CODEX_LAUNCH_ARGS = [
+	"--dangerously-bypass-approvals-and-sandbox",
+	"--no-alt-screen",
+];
 const MAX_COMMAND_BYTES = 64 * 1024;
 const MAX_BACKLOG_CHARS = 128 * 1024;
 
@@ -95,8 +98,8 @@ function makePowerShellCommand(tab, exitToken) {
 	const executable = quotePowerShell(codexExecutable);
 	const args =
 		tab.kind === "session" && tab.sessionId
-			? ["-C", tab.cwd, "resume", tab.sessionId, ...FULL_TRUST_ARGS]
-			: ["-C", tab.cwd, ...FULL_TRUST_ARGS];
+			? ["-C", tab.cwd, "resume", tab.sessionId, ...CODEX_LAUNCH_ARGS]
+			: ["-C", tab.cwd, ...CODEX_LAUNCH_ARGS];
 	const argsList = args.map(quotePowerShell).join(", ");
 	return [
 		`$Host.UI.RawUI.WindowTitle = ${title}`,

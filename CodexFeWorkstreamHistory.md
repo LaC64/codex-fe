@@ -79,3 +79,9 @@
 - Fixed the bottom terminal row being clipped as wrapped tab rows reduced the terminal viewport height.
 - Moved terminal padding from the FitAddon parent onto xterm itself so the padding is included in row-count calculations.
 - Preserved the existing visual inset while keeping regular PowerShell prompts and Codex output fully visible.
+
+## 2026-08-26 - Inline Codex Screen Mode
+
+- Added `--no-alt-screen` to the shared Codex launch arguments while preserving full-trust mode.
+- Applied the same argument list to both new chats and resumed sessions so Codex remains in terminal scrollback.
+- Added regression coverage that requires both launch branches to use the shared options.
