@@ -151,3 +151,33 @@ test("window maximized state persists and defaults off for older workspaces", ()
 		fs.rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+test("active picker tabs persist as transient picker processes", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-picker-"));
+	try {
+		const filePath = path.join(directory, "tabs.json");
+		const store = new WorkspaceStore(filePath);
+		const workspace = createEmptyWorkspace();
+		workspace.tabs = [
+			{
+				tabId: "picker-tab",
+				kind: "picker",
+				sessionId: "ignored",
+				cwd: directory,
+				title: "",
+				model: "ignored",
+				createdAt: "2026-09-09T12:00:00.000Z",
+			},
+		];
+		workspace.activeTabId = "picker-tab";
+		store.save(workspace);
+
+		const picker = store.load().tabs[0];
+		assert.equal(picker.kind, "picker");
+		assert.equal(picker.title, "Codex-FE");
+		assert.equal(picker.sessionId, "");
+		assert.equal(picker.model, "");
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});

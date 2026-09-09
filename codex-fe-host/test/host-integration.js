@@ -58,7 +58,8 @@ function startHost() {
 				...process.env,
 				CODEX_FE_CODEX_EXE: stubExecutable,
 				CODEX_FE_INTEGRATION_TEST: "1",
-				CODEX_FE_PICKER_COMMAND: "Write-Output CODEX_FE_PICKER_STARTED",
+				CODEX_FE_PICKER_COMMAND:
+					"Write-Output CODEX_FE_PICKER_STARTED; Start-Sleep -Milliseconds 1000",
 			},
 			stdio: "ignore",
 			windowsHide: true,
@@ -427,7 +428,7 @@ async function run() {
 		return state.tabs.length === 3 ? state : null;
 	});
 	const pickerTab = stateWithPicker.tabs.at(-1);
-	assert.equal(pickerTab.kind, "powershell");
+	assert.equal(pickerTab.kind, "picker");
 	assert.equal(pickerTab.title, "Codex-FE");
 	const pickerRuntime = await waitUntil("Codex-FE picker launch", async () => {
 		const state = await hostRequest(
@@ -438,8 +439,20 @@ async function run() {
 		return state.picker_launch_count === 1 ? state : null;
 	});
 	assert.equal(pickerRuntime.picker_launch_count, 1);
+	const stateAfterPickerExit = await waitUntil("transient picker removal", () => {
+		const state = loadJson(stateFile);
+		return state.tabs.length === 2 ? state : null;
+	});
+	assert.equal(
+		stateAfterPickerExit.tabs.some((tab) => tab.tabId === pickerTab.tabId),
+		false,
+	);
+	assert.equal(
+		stateAfterPickerExit.closedTabs.some((tab) => tab.tabId === pickerTab.tabId),
+		false,
+	);
 	console.log(
-		"Integration passed: reordered tabs, restored a closed tab, and launched the Codex-FE picker.",
+		"Integration passed: reordered tabs, restored a closed tab, and auto-closed the Codex-FE picker.",
 	);
 }
 

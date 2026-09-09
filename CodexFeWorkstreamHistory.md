@@ -91,3 +91,10 @@
 - Added drag-and-drop tab reordering backed by the canonical persisted workspace order, without restarting PTYs or changing the active tab.
 - Added a robot action beside the new-PowerShell `+` button that creates a normal shell tab and starts the bundled Codex-FE picker once.
 - Added unit and isolated Electron coverage for renderer drag dispatch, persisted ordering, robot-button wiring, and picker command launch.
+
+## 2026-09-09 - Transient Picker Tabs
+
+- Replaced the platform-colored robot emoji with a monochrome SVG that uses the same orange token as tab `PS` markers.
+- Added a distinct persisted `picker` tab kind that launches Codex-FE directly and removes itself when the picker exits.
+- Excluded picker tabs from closed-tab history so selecting a session or quitting the picker does not leave a dead shell tab or a restorable transient entry.
+- Preserved active picker tabs during whole-host shutdown so they can restart with the saved workspace like other currently open tabs.

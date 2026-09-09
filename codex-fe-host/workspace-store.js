@@ -28,7 +28,7 @@ function normalizeTab(value) {
 	if (
 		!tabId ||
 		!cwd ||
-		!["session", "pending_new_chat", "powershell"].includes(kind) ||
+		!["session", "pending_new_chat", "powershell", "picker"].includes(kind) ||
 		(kind === "session" && !sessionId)
 	) {
 		return null;
@@ -40,8 +40,14 @@ function normalizeTab(value) {
 		cwd,
 		title:
 			String(value.title || "").trim() ||
-			(kind === "powershell" ? "PowerShell" : "Codex Session"),
-		model: kind === "powershell" ? "" : String(value.model || "").trim(),
+			(kind === "powershell"
+				? "PowerShell"
+				: kind === "picker"
+					? "Codex-FE"
+					: "Codex Session"),
+		model: ["powershell", "picker"].includes(kind)
+			? ""
+			: String(value.model || "").trim(),
 		createdAt: String(value.createdAt || "").trim() || new Date().toISOString(),
 	};
 }

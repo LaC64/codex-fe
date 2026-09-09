@@ -102,7 +102,8 @@ codex-fe-host\start.cmd
 - Selecting an already-open Codex session focuses its existing tab instead of starting another process.
 - If Codex has exited to that tab's PowerShell prompt, selecting the session resumes Codex again in the same tab.
 - The `+` button opens a standalone PowerShell tab without starting Codex.
-- The robot button opens a PowerShell tab and starts the Codex-FE session picker in it.
+- The monochrome orange robot button opens the Codex-FE session picker in a temporary tab.
+- The picker tab closes after the picker exits and is not added to `Ctrl+Shift+T` history. Selecting a session leaves the selected or existing session tab active.
 - Drag tabs to reorder them; the order is saved and restored with the workspace.
 - Tabs can grow to `520px` wide and wrap into additional header rows instead of using horizontal scrolling.
 - Terminal rows remain fully visible as wrapped tab rows change the available terminal height.

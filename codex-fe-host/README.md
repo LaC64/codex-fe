@@ -12,7 +12,7 @@ Direct startup restores tabs from `~/.codex/codex-fe-tabs.json`. Normal use star
 
 Selecting a session that is already open focuses its existing tab. Use the `+` button in the tab bar to open a standalone PowerShell tab without starting Codex. Both Codex and PowerShell tabs remain in the saved workspace until their tab is closed.
 
-Drag tabs to persist a new order. The robot button beside `+` opens a normal PowerShell tab and starts the Codex-FE picker once; after the picker exits, that tab remains a normal shell.
+Drag tabs to persist a new order. The monochrome orange robot button beside `+` opens the Codex-FE picker in a temporary tab. The tab closes without entering closed-tab history when the picker exits, while the selected or already-open session remains active.
 
 When managed Codex exits but leaves the tab at its PowerShell prompt, selecting that session again resumes Codex inside the existing tab rather than creating a duplicate or doing nothing.
 

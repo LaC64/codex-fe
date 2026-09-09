@@ -271,6 +271,15 @@ function spawnTab(tab) {
 		const shellArguments =
 			tab.kind === "powershell"
 				? ["-NoLogo"]
+				: tab.kind === "picker"
+					? [
+							"-NoLogo",
+							"-NoProfile",
+							"-ExecutionPolicy",
+							"Bypass",
+							"-Command",
+							resolveCodexFePickerCommand(),
+						]
 				: [
 						"-NoLogo",
 						"-NoExit",
@@ -282,7 +291,9 @@ function spawnTab(tab) {
 							? makePowerShellCommand(tab, runtime.exitToken)
 							: `Write-Host ${quotePowerShell(`Saved folder no longer exists: ${tab.cwd}`)} -ForegroundColor Red`,
 					];
-		if (tab.kind !== "powershell" && fs.existsSync(tab.cwd)) {
+		if (tab.kind === "picker") {
+			runtime.pickerLaunchCount = 1;
+		} else if (tab.kind !== "powershell" && fs.existsSync(tab.cwd)) {
 			runtime.codexRunning = true;
 			runtime.codexLaunchCount = 1;
 		}
@@ -305,6 +316,10 @@ function spawnTab(tab) {
 			runtime.exitCode = exitCode;
 			runtime.pty = null;
 			runtime.codexRunning = false;
+			if (tab.kind === "picker" && !shuttingDown) {
+				closeTab(tab.tabId, false);
+				return;
+			}
 			if (mainWindow && !mainWindow.isDestroyed()) {
 				mainWindow.webContents.send("terminal:exit", tab.tabId, exitCode);
 			}
@@ -403,21 +418,15 @@ function addPowerShellTab(title = "PowerShell") {
 }
 
 function addCodexFeTab() {
-	const tab = addPowerShellTab("Codex-FE");
-	const runtime = spawnTab(tab);
-	if (!runtime.pty || runtime.exited) {
-		return tab;
-	}
-	try {
-		runtime.pty.write(`${resolveCodexFePickerCommand()}\r`);
-		runtime.pickerLaunchCount += 1;
-	} catch (error) {
-		appendBacklog(
-			runtime,
-			`\r\n\x1b[31m${String(error.message || error)}\x1b[0m\r\n`,
-		);
-	}
-	return tab;
+	return appendTab({
+		tabId: crypto.randomUUID(),
+		kind: "picker",
+		sessionId: "",
+		cwd: os.homedir(),
+		title: "Codex-FE",
+		model: "",
+		createdAt: new Date().toISOString(),
+	});
 }
 
 function rememberClosedTab(tab) {
@@ -430,13 +439,15 @@ function rememberClosedTab(tab) {
 	}
 }
 
-function closeTab(tabId) {
+function closeTab(tabId, remember = true) {
 	const index = workspace.tabs.findIndex((tab) => tab.tabId === tabId);
 	if (index < 0) {
 		return false;
 	}
 	const [closedTab] = workspace.tabs.splice(index, 1);
-	rememberClosedTab(closedTab);
+	if (remember && closedTab.kind !== "picker") {
+		rememberClosedTab(closedTab);
+	}
 	if (workspace.activeTabId === tabId) {
 		const replacement = workspace.tabs[Math.min(index, workspace.tabs.length - 1)];
 		workspace.activeTabId = replacement?.tabId || null;

@@ -128,7 +128,7 @@ test("tab drag requests persisted reordering by stable IDs", () => {
 	);
 });
 
-test("robot action opens a PowerShell tab and launches Codex-FE", () => {
+test("robot action uses a monochrome icon and transient picker tab", () => {
 	const hostRoot = path.resolve(__dirname, "..");
 	const html = fs.readFileSync(
 		path.join(hostRoot, "renderer", "index.html"),
@@ -136,12 +136,19 @@ test("robot action opens a PowerShell tab and launches Codex-FE", () => {
 	);
 	const main = fs.readFileSync(path.join(hostRoot, "main.js"), "utf8");
 	const preload = fs.readFileSync(path.join(hostRoot, "preload.js"), "utf8");
-
-	assert.match(
-		html,
-		/id="tab-add"[^>]*>\+<\/button>\s*<button class="tab-picker" id="tab-picker"[^>]*>&#x1f916;<\/button>/,
+	const styles = fs.readFileSync(
+		path.join(hostRoot, "renderer", "styles.css"),
+		"utf8",
 	);
-	assert.match(main, /const tab = addPowerShellTab\("Codex-FE"\);/);
-	assert.match(main, /runtime\.pty\.write\(`\$\{resolveCodexFePickerCommand\(\)\}\\r`\);/);
+
+	assert.match(html, /class="tab-picker" id="tab-picker"/);
+	assert.match(html, /<svg class="robot-icon"/);
+	assert.doesNotMatch(html, /&#x1f916;/);
+	assert.match(styles, /\.tab-picker\s*\{[^}]*color:\s*var\(--orange\);/s);
+	assert.match(styles, /\.robot-icon\s*\{[^}]*stroke:\s*currentColor;/s);
+	assert.match(main, /kind: "picker"/);
+	assert.match(main, /tab\.kind === "picker"[\s\S]*resolveCodexFePickerCommand\(\)/);
+	assert.match(main, /closeTab\(tab\.tabId, false\);/);
+	assert.match(main, /remember && closedTab\.kind !== "picker"/);
 	assert.match(preload, /ipcRenderer\.invoke\("tab:new-picker"\)/);
 });

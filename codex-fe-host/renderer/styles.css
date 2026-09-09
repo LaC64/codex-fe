@@ -71,7 +71,24 @@ body {
 }
 
 .tab-picker {
-	font-size: 17px;
+	color: var(--orange);
+}
+
+.robot-icon {
+	display: block;
+	width: 18px;
+	height: 18px;
+	margin: auto;
+	fill: none;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 1.6;
+}
+
+.robot-icon circle:not(:first-of-type) {
+	fill: currentColor;
+	stroke: none;
 }
 
 .tab {
