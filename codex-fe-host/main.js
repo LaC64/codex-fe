@@ -67,6 +67,17 @@ function quotePowerShell(value) {
 	return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function resolveCodexFePickerCommand() {
+	const configured = String(process.env.CODEX_FE_PICKER_COMMAND || "").trim();
+	if (configured) {
+		return configured;
+	}
+	const bundledCommand = path.resolve(__dirname, "..", "codex-fe.cmd");
+	return fs.existsSync(bundledCommand)
+		? `& ${quotePowerShell(bundledCommand)}`
+		: "codex-fe";
+}
+
 function resolveCodexExecutable() {
 	const configured = process.env.CODEX_FE_CODEX_EXE;
 	if (configured && fs.existsSync(configured)) {
@@ -250,6 +261,7 @@ function spawnTab(tab) {
 		markerRemainder: "",
 		codexRunning: false,
 		codexLaunchCount: 0,
+		pickerLaunchCount: 0,
 	};
 	runtime.exitMarker = `\x1b]9;codex-fe-exit=${runtime.exitToken}\x07`;
 	runtimes.set(tab.tabId, runtime);
@@ -378,16 +390,34 @@ function addTab(command) {
 	return { tab: appendTab(tab), existing: false, relaunched: false };
 }
 
-function addPowerShellTab() {
+function addPowerShellTab(title = "PowerShell") {
 	return appendTab({
 		tabId: crypto.randomUUID(),
 		kind: "powershell",
 		sessionId: "",
 		cwd: os.homedir(),
-		title: "PowerShell",
+		title,
 		model: "",
 		createdAt: new Date().toISOString(),
 	});
+}
+
+function addCodexFeTab() {
+	const tab = addPowerShellTab("Codex-FE");
+	const runtime = spawnTab(tab);
+	if (!runtime.pty || runtime.exited) {
+		return tab;
+	}
+	try {
+		runtime.pty.write(`${resolveCodexFePickerCommand()}\r`);
+		runtime.pickerLaunchCount += 1;
+	} catch (error) {
+		appendBacklog(
+			runtime,
+			`\r\n\x1b[31m${String(error.message || error)}\x1b[0m\r\n`,
+		);
+	}
+	return tab;
 }
 
 function rememberClosedTab(tab) {
@@ -441,6 +471,33 @@ function activateTab(tabId) {
 	}
 	if (workspace.activeTabId !== tabId) {
 		workspace.activeTabId = tabId;
+		commitWorkspace();
+	}
+	return true;
+}
+
+function reorderTab(tabId, targetTabId, placement) {
+	if (!["before", "after"].includes(placement) || tabId === targetTabId) {
+		return false;
+	}
+	const sourceIndex = workspace.tabs.findIndex((tab) => tab.tabId === tabId);
+	const targetIndex = workspace.tabs.findIndex((tab) => tab.tabId === targetTabId);
+	if (sourceIndex < 0 || targetIndex < 0) {
+		return false;
+	}
+	const previousOrder = workspace.tabs.map((tab) => tab.tabId);
+	const [tab] = workspace.tabs.splice(sourceIndex, 1);
+	const adjustedTargetIndex = workspace.tabs.findIndex(
+		(candidate) => candidate.tabId === targetTabId,
+	);
+	const insertionIndex =
+		placement === "after" ? adjustedTargetIndex + 1 : adjustedTargetIndex;
+	workspace.tabs.splice(insertionIndex, 0, tab);
+	if (
+		workspace.tabs.some(
+			(candidate, index) => candidate.tabId !== previousOrder[index],
+		)
+	) {
 		commitWorkspace();
 	}
 	return true;
@@ -539,6 +596,7 @@ function startCommandServer() {
 				ok: Boolean(runtime),
 				codex_running: runtime?.codexRunning ?? false,
 				launch_count: runtime?.codexLaunchCount ?? 0,
+				picker_launch_count: runtime?.pickerLaunchCount ?? 0,
 			});
 			return;
 		}
@@ -626,6 +684,65 @@ function startCommandServer() {
 				tab_gap: result.tabGap,
 				wrap_rows: result.wrapRows,
 			});
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "POST" &&
+			request.url === "/test/click-picker"
+		) {
+			await waitForRendererLoad();
+			const clicked = await mainWindow.webContents.executeJavaScript(`
+				(() => {
+					const button = document.getElementById("tab-picker");
+					if (!button) {
+						return false;
+					}
+					button.click();
+					return true;
+				})()
+			`);
+			sendJson(response, 200, { ok: clicked });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "POST" &&
+			request.url === "/test/drag-first-after-last"
+		) {
+			await waitForRendererLoad();
+			const dragged = await mainWindow.webContents.executeJavaScript(`
+				(() => {
+					const tabs = [...document.querySelectorAll(".tab")];
+					if (tabs.length < 2) {
+						return false;
+					}
+					const source = tabs[0];
+					const target = tabs.at(-1);
+					const dataTransfer = new DataTransfer();
+					const targetRect = target.getBoundingClientRect();
+					source.dispatchEvent(new DragEvent("dragstart", {
+						bubbles: true,
+						dataTransfer,
+					}));
+					target.dispatchEvent(new DragEvent("dragover", {
+						bubbles: true,
+						clientX: targetRect.right - 1,
+						dataTransfer,
+					}));
+					target.dispatchEvent(new DragEvent("drop", {
+						bubbles: true,
+						clientX: targetRect.right - 1,
+						dataTransfer,
+					}));
+					source.dispatchEvent(new DragEvent("dragend", {
+						bubbles: true,
+						dataTransfer,
+					}));
+					return true;
+				})()
+			`);
+			sendJson(response, 200, { ok: dragged });
 			return;
 		}
 		if (
@@ -783,6 +900,10 @@ ipcMain.on("terminal:resize", (_event, tabId, cols, rows) => {
 ipcMain.handle("tab:activate", (_event, tabId) => activateTab(tabId));
 ipcMain.handle("tab:close", (_event, tabId) => closeTab(tabId));
 ipcMain.handle("tab:new-powershell", () => addPowerShellTab().tabId);
+ipcMain.handle("tab:new-picker", () => addCodexFeTab().tabId);
+ipcMain.handle("tab:reorder", (_event, tabId, targetTabId, placement) =>
+	reorderTab(tabId, targetTabId, placement),
+);
 ipcMain.handle("tab:restore-closed", () => restoreLastClosedTab()?.tabId || null);
 ipcMain.handle("clipboard:write-text", (_event, text) => {
 	clipboard.writeText(String(text || ""));

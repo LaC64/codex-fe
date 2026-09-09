@@ -55,7 +55,7 @@ test("tabs and new tab button share one wrapping strip", () => {
 		html,
 		/class="tab-strip" id="tabs">\s*<button class="tab-add"/,
 	);
-	assert.match(renderer, /tabsElement\.appendChild\(addTabElement\);/);
+	assert.match(renderer, /tabsElement\.append\(addTabElement, pickerTabElement\);/);
 	assert.match(styles, /\.tab-strip\s*\{[^}]*flex-wrap:\s*wrap;/s);
 	assert.doesNotMatch(styles, /overflow-x:\s*auto;/);
 	assert.match(styles, /\.tab\s*\{[^}]*max-width:\s*520px;/s);
@@ -107,4 +107,41 @@ test("new and resumed Codex sessions share full-trust non-alt-screen args", () =
 		/\["-C", tab\.cwd, "resume", tab\.sessionId, \.\.\.CODEX_LAUNCH_ARGS\]/,
 	);
 	assert.match(main, /\["-C", tab\.cwd, \.\.\.CODEX_LAUNCH_ARGS\]/);
+});
+
+test("tab drag requests persisted reordering by stable IDs", () => {
+	const hostRoot = path.resolve(__dirname, "..");
+	const main = fs.readFileSync(path.join(hostRoot, "main.js"), "utf8");
+	const preload = fs.readFileSync(path.join(hostRoot, "preload.js"), "utf8");
+	const renderer = fs.readFileSync(
+		path.join(hostRoot, "renderer", "renderer.js"),
+		"utf8",
+	);
+
+	assert.match(main, /function reorderTab\(tabId, targetTabId, placement\)/);
+	assert.match(main, /workspace\.tabs\.splice\(insertionIndex, 0, tab\);/);
+	assert.match(preload, /ipcRenderer\.invoke\("tab:reorder"/);
+	assert.match(renderer, /tabButton\.draggable = true;/);
+	assert.match(
+		renderer,
+		/window\.hostAPI\.reorderTab\(draggedTabId, targetTabId, placement\);/,
+	);
+});
+
+test("robot action opens a PowerShell tab and launches Codex-FE", () => {
+	const hostRoot = path.resolve(__dirname, "..");
+	const html = fs.readFileSync(
+		path.join(hostRoot, "renderer", "index.html"),
+		"utf8",
+	);
+	const main = fs.readFileSync(path.join(hostRoot, "main.js"), "utf8");
+	const preload = fs.readFileSync(path.join(hostRoot, "preload.js"), "utf8");
+
+	assert.match(
+		html,
+		/id="tab-add"[^>]*>\+<\/button>\s*<button class="tab-picker" id="tab-picker"[^>]*>&#x1f916;<\/button>/,
+	);
+	assert.match(main, /const tab = addPowerShellTab\("Codex-FE"\);/);
+	assert.match(main, /runtime\.pty\.write\(`\$\{resolveCodexFePickerCommand\(\)\}\\r`\);/);
+	assert.match(preload, /ipcRenderer\.invoke\("tab:new-picker"\)/);
 });

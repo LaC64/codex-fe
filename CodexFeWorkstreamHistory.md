@@ -85,3 +85,9 @@
 - Added `--no-alt-screen` to the shared Codex launch arguments while preserving full-trust mode.
 - Applied the same argument list to both new chats and resumed sessions so Codex remains in terminal scrollback.
 - Added regression coverage that requires both launch branches to use the shared options.
+
+## 2026-09-09 - Tab Reordering And Picker Launcher
+
+- Added drag-and-drop tab reordering backed by the canonical persisted workspace order, without restarting PTYs or changing the active tab.
+- Added a robot action beside the new-PowerShell `+` button that creates a normal shell tab and starts the bundled Codex-FE picker once.
+- Added unit and isolated Electron coverage for renderer drag dispatch, persisted ordering, robot-button wiring, and picker command launch.

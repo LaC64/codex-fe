@@ -47,7 +47,8 @@ body {
 	overflow: hidden;
 }
 
-.tab-add {
+.tab-add,
+.tab-picker {
 	width: 42px;
 	height: var(--tab-row-height);
 	flex: 0 0 42px;
@@ -61,10 +62,16 @@ body {
 }
 
 .tab-add:hover,
-.tab-add:focus-visible {
+.tab-add:focus-visible,
+.tab-picker:hover,
+.tab-picker:focus-visible {
 	background: var(--surface-active);
 	color: var(--orange);
 	outline: 0;
+}
+
+.tab-picker {
+	font-size: 17px;
 }
 
 .tab {
@@ -90,6 +97,18 @@ body {
 	border-top-color: var(--orange);
 	background: var(--surface-active);
 	color: var(--text);
+}
+
+.tab.dragging {
+	opacity: 0.45;
+}
+
+.tab.drop-before {
+	box-shadow: inset 2px 0 var(--orange);
+}
+
+.tab.drop-after {
+	box-shadow: inset -2px 0 var(--orange);
 }
 
 .shell-mark {

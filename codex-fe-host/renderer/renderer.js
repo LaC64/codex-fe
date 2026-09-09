@@ -1,5 +1,6 @@
 const tabsElement = document.getElementById("tabs");
 const addTabElement = document.getElementById("tab-add");
+const pickerTabElement = document.getElementById("tab-picker");
 const terminalsElement = document.getElementById("terminals");
 const statusElement = document.getElementById("status");
 const emptyElement = document.getElementById("empty");
@@ -24,6 +25,7 @@ const ACTIVITY_FRAMES = [
 
 let workspace = { tabs: [], activeTabId: null };
 let activityAnimationTimer = null;
+let draggedTabId = null;
 
 window.addEventListener(
 	"keydown",
@@ -175,6 +177,61 @@ function destroyTerminalView(tabId) {
 	}
 }
 
+function clearDropIndicators() {
+	for (const tab of tabsElement.querySelectorAll(".tab")) {
+		tab.classList.remove("drop-before", "drop-after");
+	}
+}
+
+function clearTabDragState() {
+	draggedTabId = null;
+	clearDropIndicators();
+	for (const tab of tabsElement.querySelectorAll(".tab.dragging")) {
+		tab.classList.remove("dragging");
+	}
+}
+
+function beginTabDrag(event, tabId) {
+	if (event.target.closest(".tab-close")) {
+		event.preventDefault();
+		return;
+	}
+	clearTabDragState();
+	draggedTabId = tabId;
+	event.dataTransfer.effectAllowed = "move";
+	event.dataTransfer.setData("text/plain", tabId);
+	event.currentTarget.classList.add("dragging");
+}
+
+function updateTabDropTarget(event, targetTabId) {
+	if (!draggedTabId || draggedTabId === targetTabId) {
+		return;
+	}
+	event.preventDefault();
+	event.dataTransfer.dropEffect = "move";
+	const target = event.currentTarget;
+	const bounds = target.getBoundingClientRect();
+	const placement = event.clientX >= bounds.left + bounds.width / 2
+		? "after"
+		: "before";
+	clearDropIndicators();
+	target.classList.add(`drop-${placement}`);
+}
+
+function finishTabDrop(event, targetTabId) {
+	event.preventDefault();
+	if (!draggedTabId || draggedTabId === targetTabId) {
+		clearTabDragState();
+		return;
+	}
+	const bounds = event.currentTarget.getBoundingClientRect();
+	const placement = event.clientX >= bounds.left + bounds.width / 2
+		? "after"
+		: "before";
+	window.hostAPI.reorderTab(draggedTabId, targetTabId, placement);
+	clearTabDragState();
+}
+
 function renderTabs() {
 	tabsElement.replaceChildren();
 	tabMarks.clear();
@@ -185,6 +242,7 @@ function renderTabs() {
 		tabButton.dataset.tabId = tab.tabId;
 		tabButton.tabIndex = 0;
 		tabButton.setAttribute("role", "tab");
+		tabButton.draggable = true;
 
 		const mark = document.createElement("span");
 		mark.className = "shell-mark";
@@ -213,13 +271,23 @@ function renderTabs() {
 				window.hostAPI.closeTab(tab.tabId);
 			}
 		});
+		tabButton.addEventListener("dragstart", (event) =>
+			beginTabDrag(event, tab.tabId),
+		);
+		tabButton.addEventListener("dragover", (event) =>
+			updateTabDropTarget(event, tab.tabId),
+		);
+		tabButton.addEventListener("drop", (event) =>
+			finishTabDrop(event, tab.tabId),
+		);
+		tabButton.addEventListener("dragend", clearTabDragState);
 		close.addEventListener("click", (event) => {
 			event.stopPropagation();
 			window.hostAPI.closeTab(tab.tabId);
 		});
 		tabsElement.appendChild(tabButton);
 	}
-	tabsElement.appendChild(addTabElement);
+	tabsElement.append(addTabElement, pickerTabElement);
 	paintActivityIndicators();
 	scheduleActivityAnimation();
 }
@@ -290,6 +358,7 @@ window.hostAPI.onData((tabId, data) => {
 });
 window.hostAPI.onExit(markExited);
 addTabElement.addEventListener("click", () => window.hostAPI.newPowerShellTab());
+pickerTabElement.addEventListener("click", () => window.hostAPI.newPickerTab());
 new ResizeObserver(fitActiveTerminal).observe(terminalsElement);
 
 window.hostAPI

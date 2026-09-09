@@ -58,6 +58,7 @@ function startHost() {
 				...process.env,
 				CODEX_FE_CODEX_EXE: stubExecutable,
 				CODEX_FE_INTEGRATION_TEST: "1",
+				CODEX_FE_PICKER_COMMAND: "Write-Output CODEX_FE_PICKER_STARTED",
 			},
 			stdio: "ignore",
 			windowsHide: true,
@@ -298,6 +299,21 @@ async function run() {
 		terminalGeometry.screenBottomOverflow <= 1,
 		`Expected the final terminal row to fit; overflow was ${terminalGeometry.screenBottomOverflow}px.`,
 	);
+	const dragResponse = await hostRequest(
+		firstDiscovery,
+		"POST",
+		"/test/drag-first-after-last",
+	);
+	assert.equal(dragResponse.ok, true);
+	const reorderedState = await waitUntil("persisted dragged tab order", () => {
+		const state = loadJson(stateFile);
+		return state.tabs[0]?.tabId === powerShellTabId ? state : null;
+	});
+	assert.deepEqual(
+		reorderedState.tabs.map((tab) => tab.tabId),
+		[powerShellTabId, firstResponse.tab_id],
+	);
+	assert.equal(reorderedState.activeTabId, powerShellTabId);
 	const closeResponse = await hostRequest(
 		firstDiscovery,
 		"POST",
@@ -400,8 +416,30 @@ async function run() {
 		},
 	);
 	assert.equal(finalState.tabs.at(-1).tabId, powerShellTabId);
+	const pickerResponse = await hostRequest(
+		secondDiscovery,
+		"POST",
+		"/test/click-picker",
+	);
+	assert.equal(pickerResponse.ok, true);
+	const stateWithPicker = await waitUntil("Codex-FE picker tab", () => {
+		const state = loadJson(stateFile);
+		return state.tabs.length === 3 ? state : null;
+	});
+	const pickerTab = stateWithPicker.tabs.at(-1);
+	assert.equal(pickerTab.kind, "powershell");
+	assert.equal(pickerTab.title, "Codex-FE");
+	const pickerRuntime = await waitUntil("Codex-FE picker launch", async () => {
+		const state = await hostRequest(
+			secondDiscovery,
+			"GET",
+			`/test/runtime?tab_id=${encodeURIComponent(pickerTab.tabId)}`,
+		);
+		return state.picker_launch_count === 1 ? state : null;
+	});
+	assert.equal(pickerRuntime.picker_launch_count, 1);
 	console.log(
-		`Integration passed: reopened ${finalState.tabs.length - restoredState.tabs.length} closed tab after host restart.`,
+		"Integration passed: reordered tabs, restored a closed tab, and launched the Codex-FE picker.",
 	);
 }
 
