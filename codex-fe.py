@@ -59,6 +59,7 @@ ASCII_ART_LINES = [
 class PickerResult:
 	action: str
 	entry: SessionEntry | None
+	provider: str = ""
 
 
 @dataclass
@@ -769,7 +770,6 @@ def render_menu(
 	conversation_query: str,
 	favorites: set[str],
 	show_unnamed: bool,
-	default_provider: str = "codex",
 ) -> tuple[int, int, int, int]:
 	term_width = os.get_terminal_size().columns
 	term_height = os.get_terminal_size().lines
@@ -795,11 +795,10 @@ def render_menu(
 
 	lines.append(
 		f"{ORANGE}Codex-FE Session Picker{RESET}  "
-		f"{GRAY}(Up/Down Enter open in host, Shift+Enter open and stay, Alt+n new chat and exit, Alt+N new chat and stay, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
+		f"{GRAY}(Up/Down Enter open in host, Shift+Enter open and stay, Alt+n choose new chat and exit, Alt+N choose new chat and stay, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
 	)
 	unnamed_state = "ON" if show_unnamed else "OFF"
-	new_provider = entries[min(max(0, selected), len(entries) - 1)].provider if entries else default_provider
-	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}  New chat: {new_provider.title()}{RESET}")
+	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}  New chat: choose provider (Claude default){RESET}")
 	lines.append(f"{ORANGE}Filter:{RESET} {GRAY}{query if query else '(none)'}{RESET}")
 	lines.append(
 		f"{ORANGE}Search:{RESET} {GRAY}{conversation_query if conversation_query else '(none)'}{RESET}"
@@ -890,6 +889,45 @@ def render_menu(
 	return max_rows, term_height, effective_top, len(rows)
 
 
+def new_chat_cwd(base_entry: SessionEntry | None) -> str:
+	if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists():
+		return base_entry.cwd
+	return os.getcwd()
+
+
+def choose_new_chat_provider(base_entry: SessionEntry | None) -> str | None:
+	"""Choose a provider without changing the session list or its filter state."""
+	options = (("claude", "CL", "Claude", ORANGE), ("codex", "CX", "Codex", BLUE))
+	selected = 0
+	cwd = new_chat_cwd(base_entry)
+	while True:
+		lines = [
+			f"{ORANGE}New Chat{RESET}",
+			f"{GRAY}Folder: {cwd}{RESET}",
+			"",
+		]
+		for index, (_, label, name, color) in enumerate(options):
+			marker = ">" if index == selected else " "
+			lines.append(f"{color}{marker} {label}  {name}{RESET}")
+		lines.extend(("", f"{GRAY}Up/Down choose, Enter start, Esc cancel{RESET}"))
+		body = "\n".join(f"{line}\x1b[K" for line in lines)
+		sys.stdout.write("\x1b[H" + body + "\x1b[J")
+		sys.stdout.flush()
+		key = get_key()
+		if key in ("esc", "quit"):
+			return None
+		if key in ("enter", "shift_enter"):
+			return options[selected][0]
+		if key == "up":
+			selected = (selected - 1) % len(options)
+		elif key == "down":
+			selected = (selected + 1) % len(options)
+		elif key == "home":
+			selected = 0
+		elif key == "end":
+			selected = len(options) - 1
+
+
 def interactive_pick(
 	entries: list[SessionEntry],
 	favorites_file: Path,
@@ -898,7 +936,6 @@ def interactive_pick(
 	open_all_favorites_cb,
 	refresh_entries_cb,
 	search_conversations_cb,
-	default_provider: str = "codex",
 ) -> PickerResult | None:
 	favorites = load_favorites(favorites_file)
 	query = ""
@@ -944,7 +981,6 @@ def interactive_pick(
 				conversation_query,
 				favorites,
 				show_unnamed,
-				default_provider,
 			)
 			key = get_key()
 			if key in ("quit", "esc"):
@@ -983,16 +1019,18 @@ def interactive_pick(
 					copy_selected_session_file_path, view[selected]
 				)
 				continue
-			if key == "new_chat_tab":
+			if key in ("new_chat_tab", "new_chat_current"):
 				base_entry = view[selected] if view else None
-				open_new_chat_tab_cb(base_entry)
-				continue
+				provider = choose_new_chat_provider(base_entry)
+				if provider is None:
+					continue
+				if key == "new_chat_tab":
+					open_new_chat_tab_cb(base_entry, provider)
+					continue
+				return PickerResult(action="new_chat_current", entry=base_entry, provider=provider)
 			if key == "open_all_favorites":
 				run_outside_alt_screen(open_all_favorites_cb, all_entries, favorites)
 				continue
-			if key == "new_chat_current":
-				base_entry = view[selected] if view else None
-				return PickerResult(action="new_chat_current", entry=base_entry)
 			if key == "refresh":
 				current_id = view[selected].identity if view else ""
 				all_entries = refresh_entries_cb()
@@ -1267,24 +1305,22 @@ def send_session_to_host(entry: SessionEntry, codex_home: Path) -> bool:
 
 def send_new_chat_to_host(
 	base_entry: SessionEntry | None, codex_home: Path,
-	default_provider: str = "codex", claude_home: Path | None = None,
+	provider: str, claude_home: Path | None = None,
 ) -> bool:
-	provider = base_entry.provider if base_entry else (
-		default_provider if default_provider in ("codex", "claude") else "codex")
-	run_cwd = (
-		base_entry.cwd
-		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
-		else os.getcwd()
-	)
+	if provider not in ("codex", "claude"):
+		raise ValueError(f"Unsupported new chat provider: {provider}")
+	provider_home = ""
+	if provider == "claude":
+		provider_home = (base_entry.provider_home if base_entry and base_entry.provider == "claude" else "")
+		provider_home = provider_home or str(claude_home or claude_home_default())
 	return send_host_command(
 		codex_home,
 		{
 			"type": "new_chat",
 			"provider": provider,
-			"provider_home": (base_entry.provider_home if base_entry else "")
-				or (str(claude_home or claude_home_default()) if provider == "claude" else ""),
+			"provider_home": provider_home,
 			"title": f"{provider.title()} New Chat",
-			"cwd": run_cwd,
+			"cwd": new_chat_cwd(base_entry),
 		},
 	)
 
@@ -1492,13 +1528,12 @@ def main() -> int:
 		entries,
 		favorites_file,
 		lambda entry: send_session_to_host(entry, codex_home),
-		lambda entry: send_new_chat_to_host(entry, codex_home, args.provider, claude_home),
+		lambda entry, provider: send_new_chat_to_host(entry, codex_home, provider, claude_home),
 		lambda all_entries, favs: open_all_favorites(
 			all_entries, favs, codex_home
 		),
 		refresh_entries,
 		search_conversations,
-		"claude" if args.provider == "claude" else "codex",
 	)
 	if selection is None:
 		print("Cancelled.")
@@ -1506,7 +1541,7 @@ def main() -> int:
 	if selection.action == "resume" and selection.entry is not None:
 		return 0 if send_session_to_host(selection.entry, codex_home) else 1
 	if selection.action == "new_chat_current":
-		return 0 if send_new_chat_to_host(selection.entry, codex_home, args.provider, claude_home) else 1
+		return 0 if send_new_chat_to_host(selection.entry, codex_home, selection.provider, claude_home) else 1
 	print("No action selected.")
 	return 0
 

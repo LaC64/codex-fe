@@ -102,15 +102,15 @@ codex-fe-host\start.cmd
 - Type to filter; `Backspace` removes filter text
 - `Alt+a` toggle unnamed session visibility
 - `Alt+r` refresh sessions
-- `Alt+n` start a new chat using the highlighted session's provider and folder, then exit the picker
-- `Alt+Shift+N` start a new chat using the highlighted session's provider and folder, keeping the picker open
+- `Alt+n` choose Claude or Codex for a new chat, then exit the picker after starting it
+- `Alt+Shift+N` use the same new-chat chooser, keeping the picker open after starting it
 - `Alt+s` enter a conversation-content search across the displayed providers
 - `Alt+Shift+O` open all favorites in host tabs
 - `Ctrl+P` copy the selected conversation JSONL path
 - `Ctrl+F` or `*` toggle favorite
 - `Alt+q` quit
 
-The menu displays the provider that will be used for a new chat. With no highlighted session, new chats use Codex, or Claude when started with `--provider claude`. You can create a first chat even when there are no saved sessions.
+The new-chat chooser defaults to Claude every time. Use `Up/Down` to select Claude or Codex, `Enter` to start, or `Esc` to return to the picker without launching anything. New chats use the highlighted session's folder, or the current folder when no session is highlighted. The provider choice is independent of the highlighted session and `--provider` list filter, so both providers remain available even with no saved sessions.
 
 ## Host Behavior
 

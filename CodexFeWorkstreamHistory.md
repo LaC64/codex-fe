@@ -114,3 +114,10 @@
 - Stopped setting `CLAUDE_CONFIG_DIR` merely because a tab stores the default Claude data home. This prevents relocating the separate user-profile `.claude.json` and unexpectedly reopening Claude's first-run setup.
 - Kept non-default config homes and explicitly inherited overrides supported. Existing saved default-home tabs use the corrected launch policy without a workspace migration; no configuration files are copied or replaced.
 - Verified 16 Python tests, 23 Node tests, and isolated ConPTY integration, including default/custom configuration environments on launch and host restart. Running user terminals and both existing Claude configuration files remained untouched.
+
+## 2026-09-28 - New Chat Provider Chooser
+
+- Added a shared Claude/Codex chooser for `Alt+n` and `Alt+Shift+N`, always starting with Claude selected. Arrow keys change provider, Enter confirms, and Escape returns without launching or changing the session list/filter.
+- Made the explicit chooser result authoritative for both launch paths instead of inheriting the highlighted session's provider. The highlighted folder is still reused; Claude config homes are retained only from Claude rows, and Codex launches carry no Claude config home.
+- Kept `--provider` as a session-list filter, not a restriction on new-chat provider choices. The host protocol and persisted workspace are unchanged, and running user terminals remain untouched.
+- Verified 27 Python tests, 23 Node tests, and Python compilation. New coverage exercises both shortcuts through the actual picker/main dispatch, default/reset behavior, arrow selection, cancellation with filter/selection preservation, empty lists, cross-provider configuration handling, and invalid-provider rejection. No live agent was launched or stopped during verification.

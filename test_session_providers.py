@@ -124,7 +124,7 @@ class ClaudeSessionTests(unittest.TestCase):
 		self.write(self.message())
 		claude = self.load()[0]
 		with patch.object(CODEX_FE, "send_host_command", return_value=True) as send:
-			CODEX_FE.send_new_chat_to_host(claude, self.home)
+			CODEX_FE.send_new_chat_to_host(claude, self.home, "claude")
 		self.assertEqual(send.call_args.args[1]["provider"], "claude")
 		self.assertEqual(send.call_args.args[1]["provider_home"], str(self.home))
 		with patch.object(CODEX_FE, "send_host_command", return_value=True) as send:
@@ -165,7 +165,7 @@ class ClaudeSessionTests(unittest.TestCase):
 		self.assertIn(CODEX_FE.ORANGE + "CL", text)
 		self.assertIn(CODEX_FE.BLUE + "CX", text)
 		self.assertIn("Provider", text)
-		self.assertIn("New chat: Claude", text)
+		self.assertIn("New chat: choose provider (Claude default)", text)
 
 
 if __name__ == "__main__":
