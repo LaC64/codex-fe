@@ -24,7 +24,7 @@ const {
 
 const {
 	normalizeProvider, sessionIdentity, resolveProviderExecutable,
-	providerLaunchArgs, claudeHome,
+	providerLaunchArgs, claudeHome, claudeConfigDir,
 } = require("./providers");
 const MAX_COMMAND_BYTES = 64 * 1024;
 const MAX_BACKLOG_CHARS = 128 * 1024;
@@ -86,10 +86,13 @@ function makePowerShellCommand(tab, exitToken) {
 	const executable = quotePowerShell(agentExecutable);
 	const args = providerLaunchArgs(tab);
 	const argsList = args.map(quotePowerShell).join(", ");
+	const configDir = provider === "claude" ? claudeConfigDir(tab) : "";
 	return [
 		`$Host.UI.RawUI.WindowTitle = ${title}`,
 		`Set-Location -LiteralPath ${cwd}`,
-		...(provider === "claude" ? [`$env:CLAUDE_CONFIG_DIR = ${quotePowerShell(claudeHome(tab))}`] : []),
+		...(provider === "claude" ? [configDir
+			? `$env:CLAUDE_CONFIG_DIR = ${quotePowerShell(configDir)}`
+			: "Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue"] : []),
 		`$agentExecutable = ${executable}`,
 		`$agentArgs = @(${argsList})`,
 		"& $agentExecutable @agentArgs",

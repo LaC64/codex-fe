@@ -62,6 +62,7 @@ function startHost() {
 				CODEX_FE_CODEX_EXE: stubExecutable,
 				CODEX_FE_CLAUDE_EXE: claudeExecutable,
 				CODEX_FE_TEST_LAUNCH_LOG: launchLog,
+				CLAUDE_CONFIG_DIR: path.join(testHome, "inherited-claude-config"),
 				CODEX_FE_INTEGRATION_TEST: "1",
 				CODEX_FE_PICKER_COMMAND:
 					"Write-Output CODEX_FE_PICKER_STARTED; Start-Sleep -Milliseconds 1000",
@@ -183,7 +184,7 @@ async function run() {
 		const path = require('node:path');
 		const args = process.argv.slice(2);
 		fs.appendFileSync(process.env.CODEX_FE_TEST_LAUNCH_LOG,
-			JSON.stringify({ args, cwd: process.cwd(), home: process.env.CLAUDE_CONFIG_DIR }) + '\\n');
+			JSON.stringify({ args, cwd: process.cwd(), home: process.env.CLAUDE_CONFIG_DIR || null }) + '\\n');
 		if (args.includes('--session-id')) {
 			const sessionId = args[args.indexOf('--session-id') + 1];
 			const directory = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'stub-project');
@@ -542,8 +543,28 @@ async function run() {
 		...command, provider: "unsupported",
 	}).then(() => null, error => error);
 	assert.match(invalidProvider?.message || "", /Unsupported provider/);
+	const defaultClaudeCommand = {
+		...command, provider: "claude", provider_home: path.join(os.homedir(), ".claude"),
+		session_id: "cccccccc-1111-4222-8333-444444444444", title: "Default Claude Config",
+	};
+	const defaultClaude = await hostRequest(thirdDiscovery, "POST", "/commands", defaultClaudeCommand);
+	await waitUntil("default Claude completes without a configuration override", async () => {
+		const runtime = await hostRequest(thirdDiscovery, "GET", `/test/runtime?tab_id=${defaultClaude.tab_id}`);
+		return runtime.ok && runtime.launch_count === 1 && !runtime.agent_running;
+	});
+	await stopHost();
+	startHost();
+	const fourthDiscovery = await waitForDiscovery();
+	await waitUntil("restored default Claude completes", async () => {
+		const runtime = await hostRequest(fourthDiscovery, "GET", `/test/runtime?tab_id=${defaultClaude.tab_id}`);
+		return runtime.ok && runtime.launch_count === 1 && !runtime.agent_running;
+	});
+	const defaultLaunches = fs.readFileSync(launchLog, "utf8").trim().split("\n").map(JSON.parse)
+		.filter(row => row.args.includes(defaultClaudeCommand.session_id));
+	assert.equal(defaultLaunches.length, 2);
+	assert.ok(defaultLaunches.every(row => row.home === null && row.args.includes("--resume")));
 	console.log(
-		"Integration passed: mixed providers, colors, Claude new/resume, closed tabs, restart, reorder, and transient picker.",
+		"Integration passed: mixed providers, default/custom Claude config, colors, new/resume, closed tabs, restart, reorder, and transient picker.",
 	);
 }
 

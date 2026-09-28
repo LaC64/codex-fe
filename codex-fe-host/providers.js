@@ -52,6 +52,15 @@ function claudeHome(tab) {
 	return path.resolve(tab.providerHome || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"));
 }
 
+// Setting even the default data directory relocates Claude's separate ~/.claude.json.
+function claudeConfigDir(tab, environment = process.env) {
+	const defaultHome = path.join(os.homedir(), ".claude");
+	const configured = environment.CLAUDE_CONFIG_DIR;
+	const home = path.resolve(tab.providerHome || configured || defaultHome);
+	const explicitlyConfigured = configured && path.relative(home, path.resolve(configured)) === "";
+	return path.relative(defaultHome, home) === "" && !explicitlyConfigured ? "" : home;
+}
+
 function findClaudeTranscript(tab) {
 	const projects = path.join(claudeHome(tab), "projects");
 	if (tab.sessionFile) {
@@ -172,5 +181,5 @@ function providerLaunchArgs(tab) {
 
 module.exports = {
 	normalizeProvider, sessionIdentity, resolveProviderExecutable,
-	claudeHome, readClaudeMetadata, providerLaunchArgs,
+	claudeHome, claudeConfigDir, readClaudeMetadata, providerLaunchArgs,
 };

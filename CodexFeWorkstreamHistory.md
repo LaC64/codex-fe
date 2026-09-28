@@ -108,3 +108,9 @@
 - Added Claude full-trust launches, deterministic new-chat UUIDs, transcript title/folder refresh, and provider-preserving closed-tab and host restart behavior.
 - Migrated legacy UUID favorites and provider-less workspace tabs to Codex while retaining the existing shared host workspace location.
 - Verified 16 Python tests, 21 Node tests, and isolated Electron/ConPTY integration covering mixed-provider launches, tab reuse, closed-tab recovery, colors, and host restart. Cached listing of 379 local sessions completed in approximately 0.63 seconds; no running user host was restarted.
+
+## 2026-09-28 - Default Claude Configuration Location
+
+- Stopped setting `CLAUDE_CONFIG_DIR` merely because a tab stores the default Claude data home. This prevents relocating the separate user-profile `.claude.json` and unexpectedly reopening Claude's first-run setup.
+- Kept non-default config homes and explicitly inherited overrides supported. Existing saved default-home tabs use the corrected launch policy without a workspace migration; no configuration files are copied or replaced.
+- Verified 16 Python tests, 23 Node tests, and isolated ConPTY integration, including default/custom configuration environments on launch and host restart. Running user terminals and both existing Claude configuration files remained untouched.

@@ -74,6 +74,8 @@ codex-fe --provider codex
 
 The default is `--provider all`. Claude sessions are read from `CLAUDE_CONFIG_DIR` or `%USERPROFILE%\.claude`; override this with `--claude-home C:\path\to\claude-config`. `--codex-home` still controls the Codex session source and the shared host workspace.
 
+The default Claude data folder does not set `CLAUDE_CONFIG_DIR` when launching Claude, so it continues using your existing `%USERPROFILE%\.claude.json` configuration. Non-default homes and explicitly inherited `CLAUDE_CONFIG_DIR` settings still use the requested custom configuration directory. FE does not copy or replace Claude configuration files.
+
 List mode:
 
 ```powershell

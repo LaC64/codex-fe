@@ -3,9 +3,32 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { providerLaunchArgs, readClaudeMetadata } = require("../providers");
+const { claudeConfigDir, providerLaunchArgs, readClaudeMetadata } = require("../providers");
 const { normalizeWorkspace, tabsShareIdentity } = require("../workspace-store");
 const { refreshClaudeTabs, resolvePendingTabs } = require("../session-resolver");
+
+test("default Claude data home does not override the global configuration location", () => {
+	const defaultHome = path.join(os.homedir(), ".claude");
+	assert.equal(claudeConfigDir({}, {}), "");
+	assert.equal(claudeConfigDir({ providerHome: defaultHome }, {}), "");
+	assert.equal(claudeConfigDir({ providerHome: path.join(defaultHome, ".") }, {}), "");
+	assert.equal(claudeConfigDir({ providerHome: defaultHome }, {
+		CLAUDE_CONFIG_DIR: path.join(os.tmpdir(), "other-claude-config"),
+	}), "");
+	if (process.platform === "win32") {
+		assert.equal(claudeConfigDir({ providerHome: defaultHome.toUpperCase() }, {}), "");
+	}
+});
+
+test("custom and explicitly inherited Claude configuration directories remain supported", () => {
+	const customHome = path.join(os.tmpdir(), "custom-claude-config");
+	const defaultHome = path.join(os.homedir(), ".claude");
+	assert.equal(claudeConfigDir({ providerHome: customHome }, {}), customHome);
+	assert.equal(claudeConfigDir({}, { CLAUDE_CONFIG_DIR: customHome }), customHome);
+	assert.equal(claudeConfigDir({ providerHome: defaultHome }, {
+		CLAUDE_CONFIG_DIR: defaultHome,
+	}), defaultHome);
+});
 
 test("legacy workspace is Codex and same UUID across providers stays distinct", () => {
 	const legacy = { tabId: "cx", kind: "session", sessionId: "same", cwd: os.tmpdir() };
