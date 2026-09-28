@@ -17,8 +17,12 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from session_providers import (
+	SessionEntry, claude_home_default, load_claude_entries, search_claude_sessions,
+)
 
 ORANGE = "\x1b[38;2;242;140;40m"  # #F28C28
+BLUE = "\x1b[38;2;88;166;255m"  # #58A6FF
 GRAY = "\x1b[38;2;153;153;153m"   # medium gray
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
@@ -49,18 +53,6 @@ ASCII_ART_LINES = [
 	"+---------/________________________________________________________/---------+/",
 	" '----------------------------------------------------------------------------' ",
 ]
-
-
-@dataclass
-class SessionEntry:
-	session_id: str
-	thread_name: str
-	updated_at: str
-	created_at: str
-	cwd: str
-	model: str
-	is_named: bool
-	session_file: str
 
 
 @dataclass
@@ -170,6 +162,8 @@ def extract_message_text(payload: dict[str, Any]) -> str:
 
 def load_index(index_file: Path) -> list[SessionEntry]:
 	latest_by_id: dict[str, dict[str, str]] = {}
+	if not index_file.exists():
+		return []
 	with index_file.open("r", encoding="utf-8", errors="replace") as handle:
 		for line in handle:
 			line = line.strip()
@@ -699,7 +693,13 @@ def load_favorites(path: Path) -> set[str]:
 	except Exception:
 		return set()
 	values = obj.get("favorites", []) if isinstance(obj, dict) else []
-	return {str(v).strip() for v in values if str(v).strip()}
+	if not isinstance(values, list):
+		return set()
+	favorites = {str(v).strip() for v in values if str(v).strip()}
+	normalized = {v if ":" in v else f"codex:{v}" for v in favorites}
+	if normalized != favorites:
+		save_favorites(path, normalized)
+	return normalized
 
 
 def save_favorites(path: Path, favorites: set[str]) -> None:
@@ -728,15 +728,16 @@ def apply_filter_and_sort(
 			or q in e.model.lower()
 			or q in e.updated_at.lower()
 			or q in e.cwd.lower()
+			or q in e.provider.lower()
 		]
 	if content_matches is not None:
-		filtered = [e for e in filtered if e.session_id in content_matches]
+		filtered = [e for e in filtered if e.identity in content_matches]
 	# Keep named before unnamed, favorites on top inside each section.
 	return sorted(
 		filtered,
 		key=lambda e: (
 			0 if e.is_named else 1,
-			0 if e.session_id in favorites else 1,
+			0 if e.identity in favorites else 1,
 		),
 	)
 
@@ -768,6 +769,7 @@ def render_menu(
 	conversation_query: str,
 	favorites: set[str],
 	show_unnamed: bool,
+	default_provider: str = "codex",
 ) -> tuple[int, int, int, int]:
 	term_width = os.get_terminal_size().columns
 	term_height = os.get_terminal_size().lines
@@ -780,34 +782,36 @@ def render_menu(
 		sys.stdout.flush()
 
 	pin_w = 3
+	provider_w = 8
 	name_w = min(30, max(16, term_width // 5))
 	model_w = min(18, max(10, term_width // 8))
 	updated_w = 9
 	created_w = 9
-	cwd_w = max(20, term_width - (pin_w + name_w + model_w + updated_w + created_w + 14))
+	cwd_w = max(8, term_width - (pin_w + provider_w + name_w + model_w + updated_w + created_w + 16))
 
 	for i, art_line in enumerate(ASCII_ART_LINES):
 		color = ORANGE if i < 11 or i >= 17 else GRAY
 		lines.append(f"{color}{fit_banner_line(art_line, term_width)}{RESET}")
 
 	lines.append(
-		f"{ORANGE}Codex Resume Picker{RESET}  "
+		f"{ORANGE}Codex-FE Session Picker{RESET}  "
 		f"{GRAY}(Up/Down Enter open in host, Shift+Enter open and stay, Alt+n new chat and exit, Alt+N new chat and stay, Alt+s convo search, Ctrl+P copy file path, Alt+Shift+O open favorites, Alt+r refresh, Alt+a toggle unnamed, type filter, Backspace, Ctrl+F or * favorite, Alt+q quit){RESET}"
 	)
 	unnamed_state = "ON" if show_unnamed else "OFF"
-	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}{RESET}")
+	new_provider = entries[min(max(0, selected), len(entries) - 1)].provider if entries else default_provider
+	lines.append(f"{ORANGE}Unnamed:{RESET} {GRAY}{unnamed_state}  New chat: {new_provider.title()}{RESET}")
 	lines.append(f"{ORANGE}Filter:{RESET} {GRAY}{query if query else '(none)'}{RESET}")
 	lines.append(
 		f"{ORANGE}Search:{RESET} {GRAY}{conversation_query if conversation_query else '(none)'}{RESET}"
 	)
 	lines.append(
-		f"{GRAY}{'Pin'.ljust(pin_w)} {'Name'.ljust(name_w)}  "
+		f"{GRAY}  {'Pin'.ljust(pin_w)} {'Provider'.ljust(provider_w)}  {'Name'.ljust(name_w)}  "
 		f"{'Model'.ljust(model_w)}  {'Updated'.ljust(updated_w)}  "
 		f"{'Created'.ljust(created_w)}  "
 		f"{'Folder'.ljust(cwd_w)}{RESET}"
 	)
 	lines.append(
-		f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + created_w + cwd_w + 10)}{RESET}"
+		f"{DIM}{'-' * min(term_width, pin_w + provider_w + name_w + model_w + updated_w + created_w + cwd_w + 14)}{RESET}"
 	)
 
 	if not entries:
@@ -830,7 +834,7 @@ def render_menu(
 	for idx, (kind, payload) in enumerate(visible):
 		real_row = effective_top + idx
 		if kind == "sep":
-			sep = f"{DIM}{'-' * min(term_width, pin_w + name_w + model_w + updated_w + created_w + cwd_w + 10)}{RESET}"
+			sep = f"{DIM}{'-' * min(term_width, pin_w + provider_w + name_w + model_w + updated_w + created_w + cwd_w + 14)}{RESET}"
 			lines.append(sep)
 			continue
 		if kind == "label":
@@ -839,41 +843,44 @@ def render_menu(
 		entry = payload
 		if entry is None:
 			continue
+		provider_color = BLUE if entry.provider == "codex" else ORANGE
+		provider_label = "CX" if entry.provider == "codex" else "CL"
 		if kind == "unnamed_desc":
-			desc_w = max(20, term_width - 6)
+			desc_w = max(20, term_width - 7)
 			desc = truncate_text(entry.thread_name, desc_w)
 			if real_row == selected_row:
-				lines.append(f"{ORANGE}> {desc}{RESET}")
+				lines.append(f"{provider_color}> {provider_label} {desc}{RESET}")
 			else:
-				lines.append(f"{GRAY}  {desc}{RESET}")
+				lines.append(f"  {provider_color}{provider_label}{RESET} {GRAY}{desc}{RESET}")
 			continue
 		if kind == "unnamed_meta":
 			model = truncate_text(entry.model or "(unknown)", model_w)
 			updated = truncate_text(relative_age(entry.updated_at), updated_w)
 			created = truncate_text(relative_age(entry.created_at), created_w)
-			cwd = truncate_text(entry.cwd or "(cwd unknown)", term_width - 12)
+			cwd = truncate_text(entry.cwd or "(cwd unknown)", max(8, term_width - (model_w + updated_w + created_w + 10)))
 			meta = (
 				f"    {model.ljust(model_w)}  {updated.ljust(updated_w)}  "
 				f"{created.ljust(created_w)}  {cwd}"
 			)
 			if real_row - 1 == selected_row:
-				lines.append(f"{ORANGE}{meta}{RESET}")
+				lines.append(f"{provider_color}{meta}{RESET}")
 			else:
 				lines.append(f"{GRAY}{meta}{RESET}")
 			continue
-		pin = "*" if entry.session_id in favorites else " "
+		pin = "*" if entry.identity in favorites else " "
 		name = truncate_text(entry.thread_name, name_w)
 		model = truncate_text(entry.model or "(unknown)", model_w)
 		updated = truncate_text(relative_age(entry.updated_at), updated_w)
 		created = truncate_text(relative_age(entry.created_at), created_w)
 		cwd = truncate_text(entry.cwd or "(cwd unknown)", cwd_w)
 		line = (
-			f"{pin.ljust(pin_w)} {name.ljust(name_w)}  "
+			f"{pin.ljust(pin_w)} {provider_color}{provider_label.ljust(provider_w)}{RESET}  "
+			f"{GRAY}{name.ljust(name_w)}  "
 			f"{model.ljust(model_w)}  {updated.ljust(updated_w)}  "
 			f"{created.ljust(created_w)}  {cwd.ljust(cwd_w)}"
 		)
 		if real_row == selected_row:
-			lines.append(f"{ORANGE}> {line}{RESET}")
+			lines.append(f"{provider_color}> \x1b[1m{line}{RESET}")
 		else:
 			lines.append(f"{GRAY}  {line}{RESET}")
 
@@ -891,10 +898,8 @@ def interactive_pick(
 	open_all_favorites_cb,
 	refresh_entries_cb,
 	search_conversations_cb,
+	default_provider: str = "codex",
 ) -> PickerResult | None:
-	if not entries:
-		return None
-
 	favorites = load_favorites(favorites_file)
 	query = ""
 	conversation_query = ""
@@ -939,6 +944,7 @@ def interactive_pick(
 				conversation_query,
 				favorites,
 				show_unnamed,
+				default_provider,
 			)
 			key = get_key()
 			if key in ("quit", "esc"):
@@ -988,7 +994,7 @@ def interactive_pick(
 				base_entry = view[selected] if view else None
 				return PickerResult(action="new_chat_current", entry=base_entry)
 			if key == "refresh":
-				current_id = view[selected].session_id if view else ""
+				current_id = view[selected].identity if view else ""
 				all_entries = refresh_entries_cb()
 				if conversation_query:
 					content_matches = search_conversations_cb(conversation_query)
@@ -997,7 +1003,7 @@ def interactive_pick(
 				)
 				if view:
 					selected = next(
-						(i for i, e in enumerate(view) if e.session_id == current_id), 0
+						(i for i, e in enumerate(view) if e.identity == current_id), 0
 					)
 					rows, entry_to_row = build_display_rows(view)
 					selected_row = entry_to_row[selected]
@@ -1018,7 +1024,7 @@ def interactive_pick(
 				if not view:
 					continue
 				run_outside_alt_screen(open_in_tab_cb, view[selected])
-				current_id = view[selected].session_id
+				current_id = view[selected].identity
 				all_entries = refresh_entries_cb()
 				if conversation_query:
 					content_matches = search_conversations_cb(conversation_query)
@@ -1026,7 +1032,7 @@ def interactive_pick(
 					all_entries, query, favorites, show_unnamed, content_matches
 				)
 				selected = (
-					next((i for i, e in enumerate(view) if e.session_id == current_id), 0)
+					next((i for i, e in enumerate(view) if e.identity == current_id), 0)
 					if view
 					else 0
 				)
@@ -1035,7 +1041,7 @@ def interactive_pick(
 			if key == "favorite":
 				if not view:
 					continue
-				target = view[selected].session_id
+				target = view[selected].identity
 				if target in favorites:
 					favorites.remove(target)
 				else:
@@ -1045,7 +1051,7 @@ def interactive_pick(
 				view = apply_filter_and_sort(
 					all_entries, query, favorites, show_unnamed, content_matches
 				)
-				selected = next((i for i, e in enumerate(view) if e.session_id == current_id), 0)
+				selected = next((i for i, e in enumerate(view) if e.identity == current_id), 0)
 				top = 0
 			elif key == "backspace":
 				if query:
@@ -1248,17 +1254,23 @@ def send_session_to_host(entry: SessionEntry, codex_home: Path) -> bool:
 		codex_home,
 		{
 			"type": "open_session",
+			"provider": entry.provider,
 			"session_id": entry.session_id,
 			"title": entry.thread_name,
 			"cwd": run_cwd,
 			"model": entry.model,
+			"provider_home": entry.provider_home,
+			"session_file": entry.session_file,
 		},
 	)
 
 
 def send_new_chat_to_host(
-	base_entry: SessionEntry | None, codex_home: Path
+	base_entry: SessionEntry | None, codex_home: Path,
+	default_provider: str = "codex", claude_home: Path | None = None,
 ) -> bool:
+	provider = base_entry.provider if base_entry else (
+		default_provider if default_provider in ("codex", "claude") else "codex")
 	run_cwd = (
 		base_entry.cwd
 		if base_entry is not None and base_entry.cwd and Path(base_entry.cwd).exists()
@@ -1268,7 +1280,10 @@ def send_new_chat_to_host(
 		codex_home,
 		{
 			"type": "new_chat",
-			"title": "Codex New Chat",
+			"provider": provider,
+			"provider_home": (base_entry.provider_home if base_entry else "")
+				or (str(claude_home or claude_home_default()) if provider == "claude" else ""),
+			"title": f"{provider.title()} New Chat",
 			"cwd": run_cwd,
 		},
 	)
@@ -1279,7 +1294,7 @@ def open_all_favorites(
 	favorites: set[str],
 	codex_home: Path,
 ) -> int:
-	fav_entries = [entry for entry in entries if entry.session_id in favorites]
+	fav_entries = [entry for entry in entries if entry.identity in favorites]
 	if not fav_entries:
 		print("No favorites to open.")
 		return 0
@@ -1298,8 +1313,9 @@ def print_list(
 ) -> None:
 	ordered = apply_filter_and_sort(entries, "", favorites, show_unnamed=True)
 	for entry in ordered:
-		prefix = "* " if entry.session_id in favorites else "  "
+		prefix = "* " if entry.identity in favorites else "  "
 		parts = [
+			entry.provider,
 			f"{prefix}{entry.thread_name}",
 			entry.model or "(unknown)",
 			relative_age(entry.updated_at),
@@ -1313,7 +1329,7 @@ def print_list(
 	print(f"\nTotal sessions: {len(ordered)}")
 
 
-def build_entries(codex_home: Path, name_filter: str) -> list[SessionEntry]:
+def build_codex_entries(codex_home: Path, name_filter: str) -> list[SessionEntry]:
 	index_file = codex_home / "session_index.jsonl"
 	sessions_root = codex_home / "sessions"
 	details_cache_file = codex_home / "codex-fe-session-details-cache.json"
@@ -1365,10 +1381,27 @@ def build_entries(codex_home: Path, name_filter: str) -> list[SessionEntry]:
 	return entries
 
 
+def build_entries(
+	codex_home: Path, name_filter: str, claude_home: Path | None = None,
+	provider: str = "all",
+) -> list[SessionEntry]:
+	entries = build_codex_entries(codex_home, "") if provider in ("all", "codex") else []
+	if provider in ("all", "claude"):
+		entries.extend(load_claude_entries(
+			claude_home or claude_home_default(),
+			codex_home / "codex-fe-claude-details-cache.json",
+		))
+	ordered = sorted(entries, key=lambda e: (e.updated_at, e.thread_name), reverse=True)
+	unique = {}
+	for entry in ordered:
+		unique.setdefault(entry.identity, entry)
+	return [e for e in unique.values() if not name_filter or name_filter in e.thread_name.lower()]
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser(
 		description=(
-			"Interactive Codex session picker for the managed Codex-FE terminal host."
+			"Interactive Codex and Claude session picker for the Codex-FE terminal host."
 		)
 	)
 	parser.add_argument(
@@ -1376,6 +1409,14 @@ def main() -> int:
 		type=Path,
 		default=Path.home() / ".codex",
 		help="Codex home directory (default: ~/.codex)",
+	)
+	parser.add_argument(
+		"--claude-home", type=Path, default=claude_home_default(),
+		help="Claude config directory (default: CLAUDE_CONFIG_DIR or ~/.claude)",
+	)
+	parser.add_argument(
+		"--provider", choices=("all", "codex", "claude"), default="all",
+		help="Session providers to show (default: all)",
 	)
 	parser.add_argument(
 		"--name",
@@ -1406,26 +1447,23 @@ def main() -> int:
 	args = parser.parse_args()
 
 	codex_home = args.codex_home.expanduser()
-	index_file = codex_home / "session_index.jsonl"
+	claude_home = args.claude_home.expanduser().resolve()
+	codex_home.mkdir(parents=True, exist_ok=True)
 	favorites_file = codex_home / "session_favorites.json"
-
-	if not index_file.exists():
-		print(f"Session index not found: {index_file}")
-		return 1
 
 	initial_filter = args.name.lower().strip()
 	entries = run_with_spinner(
-		"Parsing sessions", build_entries, codex_home, initial_filter
+		"Parsing sessions", build_entries, codex_home, initial_filter, claude_home, args.provider
 	)
 
-	if not entries:
+	if not entries and (args.list or args.open_favorites or not sys.stdin.isatty()):
 		print("No sessions matched.")
 		return 1
 
 	favorites = load_favorites(favorites_file)
 
 	if args.open_favorites:
-		fav_entries = [e for e in entries if e.session_id in favorites]
+		fav_entries = [e for e in entries if e.identity in favorites]
 		opened = open_all_favorites(entries, favorites, codex_home)
 		print(f"Opened {opened}/{len(fav_entries)} favorite sessions in host tab(s).")
 		return 0
@@ -1436,27 +1474,31 @@ def main() -> int:
 
 	def refresh_entries() -> list[SessionEntry]:
 		return run_with_spinner(
-			"Refreshing sessions", build_entries, codex_home, initial_filter
+			"Refreshing sessions", build_entries, codex_home, initial_filter, claude_home, args.provider
 		)
 
 	def search_conversations(query_text: str) -> set[str]:
-		return run_with_spinner(
-			"Searching conversations",
-			search_sessions_by_content,
-			codex_home / "sessions",
-			query_text,
-		)
+		def search() -> set[str]:
+			matches = set()
+			if args.provider in ("all", "codex"):
+				matches.update(f"codex:{sid}" for sid in search_sessions_by_content(
+					codex_home / "sessions", query_text))
+			if args.provider in ("all", "claude"):
+				matches.update(search_claude_sessions(claude_home, query_text))
+			return matches
+		return run_with_spinner("Searching conversations", search)
 
 	selection = interactive_pick(
 		entries,
 		favorites_file,
 		lambda entry: send_session_to_host(entry, codex_home),
-		lambda entry: send_new_chat_to_host(entry, codex_home),
+		lambda entry: send_new_chat_to_host(entry, codex_home, args.provider, claude_home),
 		lambda all_entries, favs: open_all_favorites(
 			all_entries, favs, codex_home
 		),
 		refresh_entries,
 		search_conversations,
+		"claude" if args.provider == "claude" else "codex",
 	)
 	if selection is None:
 		print("Cancelled.")
@@ -1464,7 +1506,7 @@ def main() -> int:
 	if selection.action == "resume" and selection.entry is not None:
 		return 0 if send_session_to_host(selection.entry, codex_home) else 1
 	if selection.action == "new_chat_current":
-		return 0 if send_new_chat_to_host(selection.entry, codex_home) else 1
+		return 0 if send_new_chat_to_host(selection.entry, codex_home, args.provider, claude_home) else 1
 	print("No action selected.")
 	return 0
 

@@ -4,6 +4,7 @@
 	--surface-active: #242424;
 	--border: #363636;
 	--orange: #f28c28;
+	--blue: #58a6ff;
 	--text: #e7e7e7;
 	--muted: #999999;
 	--tab-row-height: 42px;
@@ -92,6 +93,7 @@ body {
 }
 
 .tab {
+	--provider-color: var(--muted);
 	display: flex;
 	height: var(--tab-row-height);
 	min-width: 150px;
@@ -111,9 +113,17 @@ body {
 }
 
 .tab.active {
-	border-top-color: var(--orange);
+	border-top-color: var(--provider-color);
 	background: var(--surface-active);
 	color: var(--text);
+}
+
+.tab[data-provider="codex"] {
+	--provider-color: var(--blue);
+}
+
+.tab[data-provider="claude"] {
+	--provider-color: var(--orange);
 }
 
 .tab.dragging {
@@ -131,7 +141,7 @@ body {
 .shell-mark {
 	width: 20px;
 	flex: 0 0 auto;
-	color: var(--orange);
+	color: var(--provider-color);
 	font-family: "Cascadia Mono", Consolas, monospace;
 	font-weight: 700;
 	text-align: center;

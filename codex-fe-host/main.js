@@ -4,7 +4,6 @@ const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 const pty = require("node-pty");
 const {
 	MAX_CLOSED_TABS,
@@ -16,16 +15,17 @@ const {
 const {
 	loadSessionTitles,
 	resolvePendingTabs,
+	refreshClaudeTabs,
 } = require("./session-resolver");
 const {
 	consumeExitMarkers,
 	flushMarkerRemainder,
 } = require("./runtime-output");
 
-const CODEX_LAUNCH_ARGS = [
-	"--dangerously-bypass-approvals-and-sandbox",
-	"--no-alt-screen",
-];
+const {
+	normalizeProvider, sessionIdentity, resolveProviderExecutable,
+	providerLaunchArgs, claudeHome,
+} = require("./providers");
 const MAX_COMMAND_BYTES = 64 * 1024;
 const MAX_BACKLOG_CHARS = 128 * 1024;
 
@@ -78,46 +78,21 @@ function resolveCodexFePickerCommand() {
 		: "codex-fe";
 }
 
-function resolveCodexExecutable() {
-	const configured = process.env.CODEX_FE_CODEX_EXE;
-	if (configured && fs.existsSync(configured)) {
-		return configured;
-	}
-	const appDataCandidate = process.env.APPDATA
-		? path.join(process.env.APPDATA, "npm", "codex.cmd")
-		: "";
-	if (appDataCandidate && fs.existsSync(appDataCandidate)) {
-		return appDataCandidate;
-	}
-	for (const name of ["codex.cmd", "codex.exe", "codex"]) {
-		const result = spawnSync("where.exe", [name], {
-			encoding: "utf8",
-			windowsHide: true,
-		});
-		const candidate = String(result.stdout || "").split(/\r?\n/).find(Boolean);
-		if (candidate) {
-			return candidate.trim();
-		}
-	}
-	throw new Error("Could not find Codex on PATH.");
-}
-
 function makePowerShellCommand(tab, exitToken) {
-	const codexExecutable = resolveCodexExecutable();
-	const title = quotePowerShell(tab.title || "Codex");
+	const provider = normalizeProvider(tab.provider);
+	const agentExecutable = resolveProviderExecutable(provider);
+	const title = quotePowerShell(tab.title || provider);
 	const cwd = quotePowerShell(tab.cwd);
-	const executable = quotePowerShell(codexExecutable);
-	const args =
-		tab.kind === "session" && tab.sessionId
-			? ["-C", tab.cwd, "resume", tab.sessionId, ...CODEX_LAUNCH_ARGS]
-			: ["-C", tab.cwd, ...CODEX_LAUNCH_ARGS];
+	const executable = quotePowerShell(agentExecutable);
+	const args = providerLaunchArgs(tab);
 	const argsList = args.map(quotePowerShell).join(", ");
 	return [
 		`$Host.UI.RawUI.WindowTitle = ${title}`,
 		`Set-Location -LiteralPath ${cwd}`,
-		`$codexExecutable = ${executable}`,
-		`$codexArgs = @(${argsList})`,
-		"& $codexExecutable @codexArgs",
+		...(provider === "claude" ? [`$env:CLAUDE_CONFIG_DIR = ${quotePowerShell(claudeHome(tab))}`] : []),
+		`$agentExecutable = ${executable}`,
+		`$agentArgs = @(${argsList})`,
+		"& $agentExecutable @agentArgs",
 		`[Console]::Write(([char]27) + ']9;codex-fe-exit=${exitToken}' + ([char]7))`,
 	].join("; ");
 }
@@ -239,7 +214,7 @@ function emitRuntimeData(tabId, runtime, data) {
 function processRuntimeData(tabId, runtime, data) {
 	const result = consumeExitMarkers(runtime, data, runtime.exitMarker);
 	if (result.markerCount > 0) {
-		runtime.codexRunning = false;
+		runtime.agentRunning = false;
 	}
 	emitRuntimeData(tabId, runtime, result.visibleData);
 }
@@ -259,8 +234,8 @@ function spawnTab(tab) {
 		exitToken: crypto.randomBytes(16).toString("hex"),
 		exitMarker: "",
 		markerRemainder: "",
-		codexRunning: false,
-		codexLaunchCount: 0,
+		agentRunning: false,
+		agentLaunchCount: 0,
 		pickerLaunchCount: 0,
 	};
 	runtime.exitMarker = `\x1b]9;codex-fe-exit=${runtime.exitToken}\x07`;
@@ -294,8 +269,8 @@ function spawnTab(tab) {
 		if (tab.kind === "picker") {
 			runtime.pickerLaunchCount = 1;
 		} else if (tab.kind !== "powershell" && fs.existsSync(tab.cwd)) {
-			runtime.codexRunning = true;
-			runtime.codexLaunchCount = 1;
+			runtime.agentRunning = true;
+			runtime.agentLaunchCount = 1;
 		}
 		runtime.pty = pty.spawn(
 			"powershell.exe",
@@ -315,7 +290,7 @@ function spawnTab(tab) {
 			runtime.exited = true;
 			runtime.exitCode = exitCode;
 			runtime.pty = null;
-			runtime.codexRunning = false;
+			runtime.agentRunning = false;
 			if (tab.kind === "picker" && !shuttingDown) {
 				closeTab(tab.tabId, false);
 				return;
@@ -334,13 +309,13 @@ function spawnTab(tab) {
 
 function launchSessionInRuntime(tab, runtime) {
 	const command = makePowerShellCommand(tab, runtime.exitToken);
-	runtime.codexRunning = true;
-	runtime.codexLaunchCount += 1;
+	runtime.agentRunning = true;
+	runtime.agentLaunchCount += 1;
 	try {
 		runtime.pty.write(`${command}\r`);
 	} catch (error) {
-		runtime.codexRunning = false;
-		runtime.codexLaunchCount -= 1;
+		runtime.agentRunning = false;
+		runtime.agentLaunchCount -= 1;
 		throw error;
 	}
 }
@@ -357,7 +332,7 @@ function ensureSessionRunning(tab) {
 		}
 		return true;
 	}
-	if (!previousRuntime.codexRunning) {
+	if (!previousRuntime.agentRunning) {
 		launchSessionInRuntime(tab, previousRuntime);
 		return true;
 	}
@@ -376,14 +351,18 @@ function appendTab(tab) {
 }
 
 function addTab(command) {
+	const provider = normalizeProvider(command.provider);
 	const isSession = command.type === "open_session";
 	const sessionId = isSession ? String(command.session_id || "").trim() : "";
 	if (isSession && !sessionId) {
 		throw new Error("A session ID is required.");
 	}
+	if (isSession && provider === "claude" && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) {
+		throw new Error("Claude sessions require a UUID session ID.");
+	}
 	const existingTab = isSession
 		? workspace.tabs.find(
-				(tab) => tab.kind === "session" && tab.sessionId === sessionId,
+				(tab) => ["session", "pending_new_chat"].includes(tab.kind) && sessionIdentity(tab) === `${provider}:${sessionId}`,
 			)
 		: null;
 	if (existingTab) {
@@ -396,9 +375,12 @@ function addTab(command) {
 	const tab = {
 		tabId: crypto.randomUUID(),
 		kind: isSession ? "session" : "pending_new_chat",
-		sessionId,
+		provider,
+		sessionId: !isSession && provider === "claude" ? crypto.randomUUID() : sessionId,
+		providerHome: provider === "claude" ? claudeHome({ providerHome: command.provider_home }) : "",
+		sessionFile: isSession ? String(command.session_file || "").trim() : "",
 		cwd,
-		title: String(command.title || "").trim() || (isSession ? "Codex Session" : "Codex New Chat"),
+		title: String(command.title || "").trim() || `${provider === "claude" ? "Claude" : "Codex"} ${isSession ? "Session" : "New Chat"}`,
 		model: String(command.model || "").trim(),
 		createdAt: new Date().toISOString(),
 	};
@@ -518,12 +500,14 @@ function resolvePendingSessions() {
 	const changed = resolvePendingTabs(workspace, codexHome);
 	const titles = loadSessionTitles(path.join(codexHome, "session_index.jsonl"));
 	for (const tab of workspace.tabs) {
+		if ((tab.provider || "codex") !== "codex") continue;
 		const currentTitle = titles.get(tab.sessionId);
 		if (currentTitle && currentTitle !== tab.title) {
 			tab.title = currentTitle;
 			changed.value = true;
 		}
 	}
+	if (refreshClaudeTabs(workspace)) changed.value = true;
 	if (changed.value) {
 		commitWorkspace();
 	}
@@ -598,6 +582,22 @@ function startCommandServer() {
 		}
 		if (
 			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
+			request.method === "GET" && request.url === "/test/tab-indicators"
+		) {
+			await waitForRendererLoad();
+			const indicators = await mainWindow.webContents.executeJavaScript(`
+				Array.from(document.querySelectorAll('.tab')).map(tab => ({
+					tab_id: tab.dataset.tabId,
+					provider: tab.dataset.provider,
+					label: tab.querySelector('.shell-mark').dataset.idleLabel,
+					color: getComputedStyle(tab.querySelector('.shell-mark')).color
+				}))
+			`);
+			sendJson(response, 200, { ok: true, indicators });
+			return;
+		}
+		if (
+			process.env.CODEX_FE_INTEGRATION_TEST === "1" &&
 			request.method === "GET" &&
 			request.url.startsWith("/test/runtime")
 		) {
@@ -605,8 +605,8 @@ function startCommandServer() {
 			const runtime = runtimes.get(requestUrl.searchParams.get("tab_id"));
 			sendJson(response, 200, {
 				ok: Boolean(runtime),
-				codex_running: runtime?.codexRunning ?? false,
-				launch_count: runtime?.codexLaunchCount ?? 0,
+				agent_running: runtime?.agentRunning ?? false,
+				launch_count: runtime?.agentLaunchCount ?? 0,
 				picker_launch_count: runtime?.pickerLaunchCount ?? 0,
 			});
 			return;

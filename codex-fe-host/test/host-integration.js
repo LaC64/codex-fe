@@ -17,6 +17,9 @@ const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-host-integratio
 const discoveryFile = path.join(testHome, "codex-fe-host.json");
 const stateFile = path.join(testHome, "codex-fe-tabs.json");
 const stubExecutable = path.join(testHome, "codex-stub.cmd");
+const claudeExecutable = path.join(testHome, "claude-stub.cmd");
+const claudeStubScript = path.join(testHome, "claude-stub.js");
+const launchLog = path.join(testHome, "claude-launches.jsonl");
 let hostProcess = null;
 let activeDiscovery = null;
 
@@ -57,6 +60,8 @@ function startHost() {
 			env: {
 				...process.env,
 				CODEX_FE_CODEX_EXE: stubExecutable,
+				CODEX_FE_CLAUDE_EXE: claudeExecutable,
+				CODEX_FE_TEST_LAUNCH_LOG: launchLog,
 				CODEX_FE_INTEGRATION_TEST: "1",
 				CODEX_FE_PICKER_COMMAND:
 					"Write-Output CODEX_FE_PICKER_STARTED; Start-Sleep -Milliseconds 1000",
@@ -172,12 +177,31 @@ async function run() {
 		JSON.stringify({ legacy: true }),
 	);
 	fs.writeFileSync(stubExecutable, "@echo off\r\necho CODEX_STUB %*\r\n");
+	fs.writeFileSync(claudeExecutable, `@echo off\r\nnode "${claudeStubScript}" %*\r\n`);
+	fs.writeFileSync(claudeStubScript, `
+		const fs = require('node:fs');
+		const path = require('node:path');
+		const args = process.argv.slice(2);
+		fs.appendFileSync(process.env.CODEX_FE_TEST_LAUNCH_LOG,
+			JSON.stringify({ args, cwd: process.cwd(), home: process.env.CLAUDE_CONFIG_DIR }) + '\\n');
+		if (args.includes('--session-id')) {
+			const sessionId = args[args.indexOf('--session-id') + 1];
+			const directory = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'stub-project');
+			fs.mkdirSync(directory, { recursive: true });
+			fs.writeFileSync(path.join(directory, sessionId + '.jsonl'), [
+				{ type: 'custom-title', sessionId, customTitle: 'Claude Stub Chat' },
+				{ type: 'user', sessionId, cwd: process.cwd(), timestamp: new Date().toISOString(),
+					message: { role: 'user', content: 'Integration prompt' } }
+			].map(row => JSON.stringify(row) + '\\n').join(''));
+		}
+		console.log('CLAUDE_STUB ' + args.join(' '));
+	`);
 
 	startHost();
 	const firstDiscovery = await waitForDiscovery();
 	const command = {
 		type: "open_session",
-		session_id: "integration-session",
+		session_id: "aaaaaaaa-1111-4222-8333-444444444444",
 		title: "Integration Session",
 		cwd: path.resolve(hostDir, ".."),
 		model: "test-model",
@@ -194,7 +218,7 @@ async function run() {
 			"GET",
 			`/test/runtime?tab_id=${encodeURIComponent(firstResponse.tab_id)}`,
 		);
-		return state.ok && !state.codex_running && state.launch_count === 1
+		return state.ok && !state.agent_running && state.launch_count === 1
 			? state
 			: null;
 	});
@@ -216,7 +240,7 @@ async function run() {
 			"GET",
 			`/test/runtime?tab_id=${encodeURIComponent(firstResponse.tab_id)}`,
 		);
-		return !state.codex_running && state.launch_count === 2 ? state : null;
+		return !state.agent_running && state.launch_count === 2 ? state : null;
 	});
 	assert.equal(secondExitState.launch_count, 2);
 
@@ -229,7 +253,7 @@ async function run() {
 	});
 	assert.deepEqual(
 		firstState.tabs.map((tab) => tab.sessionId),
-		["integration-session"],
+		["aaaaaaaa-1111-4222-8333-444444444444"],
 	);
 	assert.equal(
 		firstState.tabs.some((tab) => tab.sessionId === "must-not-import"),
@@ -253,7 +277,7 @@ async function run() {
 		"/test/activity-indicator",
 	);
 	assert.equal(idleIndicator.busy, false);
-	assert.equal(idleIndicator.text, "PS");
+	assert.equal(idleIndicator.text, "CX");
 	const powerShellResponse = await hostRequest(
 		firstDiscovery,
 		"POST",
@@ -451,12 +475,84 @@ async function run() {
 		stateAfterPickerExit.closedTabs.some((tab) => tab.tabId === pickerTab.tabId),
 		false,
 	);
+
+	const claudeCommand = {
+		...command, provider: "claude", provider_home: path.join(testHome, "claude-config"),
+		title: "Claude Integration",
+	};
+	const claudeResponse = await hostRequest(secondDiscovery, "POST", "/commands", claudeCommand);
+	assert.notEqual(claudeResponse.tab_id, firstResponse.tab_id);
+	await waitUntil("Claude exit to PowerShell", async () => {
+		const runtime = await hostRequest(secondDiscovery, "GET", `/test/runtime?tab_id=${claudeResponse.tab_id}`);
+		return runtime.ok && runtime.launch_count === 1 && !runtime.agent_running;
+	});
+	const reusedClaude = await hostRequest(secondDiscovery, "POST", "/commands", claudeCommand);
+	assert.equal(reusedClaude.tab_id, claudeResponse.tab_id);
+	assert.equal(reusedClaude.existing, true);
+	assert.equal(reusedClaude.relaunched, true);
+	const newClaude = await hostRequest(secondDiscovery, "POST", "/commands", {
+		type: "new_chat", provider: "claude", provider_home: claudeCommand.provider_home,
+		cwd: command.cwd,
+	});
+	const mixedState = await waitUntil("Claude new chat resolves its assigned UUID", () => {
+		const state = loadJson(stateFile);
+		const tab = state.tabs.find(tab => tab.tabId === newClaude.tab_id);
+		return tab?.kind === "session" && tab.title === "Claude Stub Chat" ? state : null;
+	});
+	const newClaudeTab = mixedState.tabs.find(tab => tab.tabId === newClaude.tab_id);
+	assert.match(newClaudeTab.sessionId, /^[0-9a-f-]{36}$/);
+	const indicators = await hostRequest(secondDiscovery, "GET", "/test/tab-indicators");
+	assert.deepEqual(indicators.indicators.map(({ provider, label, color }) => ({ provider, label, color })), [
+		{ provider: "codex", label: "CX", color: "rgb(88, 166, 255)" },
+		{ provider: "shell", label: "PS", color: "rgb(153, 153, 153)" },
+		{ provider: "claude", label: "CL", color: "rgb(242, 140, 40)" },
+		{ provider: "claude", label: "CL", color: "rgb(242, 140, 40)" },
+	]);
+	const closeClaude = await hostRequest(secondDiscovery, "POST", "/test/close-active");
+	assert.equal(closeClaude.tab_id, newClaude.tab_id);
+	await hostRequest(secondDiscovery, "POST", "/test/restore-shortcut");
+	await waitUntil("closed Claude tab reopens by provider", () => {
+		const state = loadJson(stateFile);
+		return state.tabs.at(-1)?.tabId === newClaude.tab_id && state.closedTabs.length === 0;
+	});
+	await waitUntil("reopened Claude process completes before shutdown", async () => {
+		const runtime = await hostRequest(secondDiscovery, "GET", `/test/runtime?tab_id=${newClaude.tab_id}`);
+		return runtime.ok && runtime.launch_count === 1 && !runtime.agent_running;
+	});
+	await stopHost();
+	startHost();
+	const thirdDiscovery = await waitForDiscovery();
+	const restoredMixed = loadJson(stateFile);
+	assert.deepEqual(restoredMixed.tabs.map(tab => [tab.tabId, tab.provider, tab.sessionId]),
+		mixedState.tabs.map(tab => [tab.tabId, tab.provider, tab.sessionId]));
+	await waitUntil("restored Claude session launch", () => {
+		const rows = fs.readFileSync(launchLog, "utf8").trim().split("\n").map(JSON.parse);
+		return rows.filter(row => row.args.includes(newClaudeTab.sessionId)).length >= 3;
+	});
+	const launches = fs.readFileSync(launchLog, "utf8").trim().split("\n").map(JSON.parse);
+	for (const launch of launches) {
+		assert.ok(launch.args.includes("--dangerously-skip-permissions"));
+		assert.ok(!launch.args.includes("--no-alt-screen"));
+		assert.equal(launch.cwd.toLowerCase(), command.cwd.toLowerCase());
+		assert.equal(launch.home, claudeCommand.provider_home);
+	}
+	assert.equal(launches.filter(row => row.args.includes("--session-id")).length, 1);
+	assert.ok(launches.at(-1).args.includes("--resume"));
+	const invalidProvider = await hostRequest(thirdDiscovery, "POST", "/commands", {
+		...command, provider: "unsupported",
+	}).then(() => null, error => error);
+	assert.match(invalidProvider?.message || "", /Unsupported provider/);
 	console.log(
-		"Integration passed: reordered tabs, restored a closed tab, and auto-closed the Codex-FE picker.",
+		"Integration passed: mixed providers, colors, Claude new/resume, closed tabs, restart, reorder, and transient picker.",
 	);
 }
 
 run()
+	.catch((error) => {
+		console.error("Claude launch diagnostics:", fs.existsSync(launchLog) ? fs.readFileSync(launchLog, "utf8") : "no launches");
+		console.error("Workspace diagnostics:", fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8") : "no workspace");
+		throw error;
+	})
 	.finally(async () => {
 		try {
 			await stopHost();

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { normalizeProvider, sessionIdentity } = require("./providers");
 
 const WORKSPACE_VERSION = 1;
 const MAX_CLOSED_TABS = 50;
@@ -25,18 +26,27 @@ function normalizeTab(value) {
 	const kind = String(value.kind || "").trim();
 	const sessionId = String(value.sessionId || "").trim();
 	const cwd = String(value.cwd || "").trim();
+	let provider;
+	try {
+		provider = normalizeProvider(value.provider);
+	} catch {
+		return null;
+	}
 	if (
 		!tabId ||
 		!cwd ||
 		!["session", "pending_new_chat", "powershell", "picker"].includes(kind) ||
-		(kind === "session" && !sessionId)
+		((kind === "session" || (kind === "pending_new_chat" && provider === "claude")) && !sessionId)
 	) {
 		return null;
 	}
 	return {
 		tabId,
 		kind,
-		sessionId: kind === "session" ? sessionId : "",
+		provider,
+		sessionId: kind === "session" || (kind === "pending_new_chat" && provider === "claude") ? sessionId : "",
+		providerHome: String(value.providerHome || "").trim(),
+		sessionFile: String(value.sessionFile || "").trim(),
 		cwd,
 		title:
 			String(value.title || "").trim() ||
@@ -44,7 +54,7 @@ function normalizeTab(value) {
 				? "PowerShell"
 				: kind === "picker"
 					? "Codex-FE"
-					: "Codex Session"),
+					: `${provider === "claude" ? "Claude" : "Codex"} Session`),
 		model: ["powershell", "picker"].includes(kind)
 			? ""
 			: String(value.model || "").trim(),
@@ -55,20 +65,21 @@ function normalizeTab(value) {
 function uniqueSessionTabs(tabs, requestedActiveId) {
 	const preferredTabBySession = new Map();
 	for (const tab of tabs) {
-		if (tab.kind !== "session") {
+		if (!["session", "pending_new_chat"].includes(tab.kind) || !tab.sessionId) {
 			continue;
 		}
 		if (
-			!preferredTabBySession.has(tab.sessionId) ||
+			!preferredTabBySession.has(sessionIdentity(tab)) ||
 			tab.tabId === requestedActiveId
 		) {
-			preferredTabBySession.set(tab.sessionId, tab.tabId);
+			preferredTabBySession.set(sessionIdentity(tab), tab.tabId);
 		}
 	}
 	return tabs.filter(
 		(tab) =>
-			tab.kind !== "session" ||
-			preferredTabBySession.get(tab.sessionId) === tab.tabId,
+			!tab.sessionId ||
+			!["session", "pending_new_chat"].includes(tab.kind) ||
+			preferredTabBySession.get(sessionIdentity(tab)) === tab.tabId,
 	);
 }
 
@@ -77,9 +88,10 @@ function tabsShareIdentity(left, right) {
 		return true;
 	}
 	return (
-		left.kind === "session" &&
-		right.kind === "session" &&
-		left.sessionId === right.sessionId
+		["session", "pending_new_chat"].includes(left.kind) &&
+		["session", "pending_new_chat"].includes(right.kind) &&
+		Boolean(left.sessionId) &&
+		sessionIdentity(left) === sessionIdentity(right)
 	);
 }
 

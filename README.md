@@ -1,21 +1,23 @@
 # Codex CLI Front End
 
-Codex-FE replaces the default `codex resume` picker and opens selected conversations in a managed Electron terminal host.
+Codex-FE provides one session picker for Codex CLI and Claude Code and opens selected conversations in a managed Electron terminal host.
 
 ## Features
 
-- Find named and unnamed Codex sessions without changing folders
+- Find named and unnamed Codex and Claude sessions without changing folders
 - Navigate with arrow keys and filter by typing
 - Persist favorites
 - Resume sessions in their last-used folders
-- Open PowerShell/Codex sessions in managed Chromium tabs
-- Reuse an already-open tab when the same Codex session is selected again
+- Open PowerShell, Codex, and Claude sessions in managed Chromium tabs
+- Reuse an already-open tab when the same provider/session is selected again
 - Open standalone PowerShell tabs from the host tab bar
 - Restore exactly the host tabs that were open when the app closed
 - Remove a session from future restoration by closing its host tab
-- Preserve chat titles, models, and full-trust Codex startup
+- Preserve chat titles, models, and full-trust startup for both providers
 
-Only sessions explicitly renamed with `/rename` are considered named. Use `Alt+a` to include unnamed sessions whose title is derived from their first message.
+Only explicitly named sessions are considered named: Codex `/rename`, or Claude `/rename` and `--name`. Use `Alt+a` to include unnamed sessions, including Claude's automatically generated AI titles. Explicit Claude names take precedence over generated titles.
+
+The picker shows a Provider column: blue `CX` for Codex and orange `CL` for Claude. Host tabs use the same colors and labels; standalone PowerShell tabs use gray `PS`.
 
 ## Components
 
@@ -30,7 +32,7 @@ The Python picker never stores or restores tabs. The host is the only owner of `
 - Windows 10/11 with ConPTY
 - Python 3.10+
 - Node.js and npm
-- Codex CLI installed and on `PATH`
+- Codex CLI and/or Claude Code installed and authenticated on `PATH`; use Claude Code 2.1.223+ for [resuming a session UUID across project folders](https://code.claude.com/docs/en/cli-reference)
 
 Install the host dependencies after cloning:
 
@@ -63,6 +65,15 @@ Run the picker:
 codex-fe
 ```
 
+Limit the picker to one provider:
+
+```powershell
+codex-fe --provider claude
+codex-fe --provider codex
+```
+
+The default is `--provider all`. Claude sessions are read from `CLAUDE_CONFIG_DIR` or `%USERPROFILE%\.claude`; override this with `--claude-home C:\path\to\claude-config`. `--codex-home` still controls the Codex session source and the shared host workspace.
+
 List mode:
 
 ```powershell
@@ -89,19 +100,22 @@ codex-fe-host\start.cmd
 - Type to filter; `Backspace` removes filter text
 - `Alt+a` toggle unnamed session visibility
 - `Alt+r` refresh sessions
-- `Alt+n` start a new hosted chat and exit the picker
-- `Alt+N` start a new hosted chat and keep the picker open
+- `Alt+n` start a new chat using the highlighted session's provider and folder, then exit the picker
+- `Alt+Shift+N` start a new chat using the highlighted session's provider and folder, keeping the picker open
+- `Alt+s` enter a conversation-content search across the displayed providers
 - `Alt+Shift+O` open all favorites in host tabs
 - `Ctrl+P` copy the selected conversation JSONL path
 - `Ctrl+F` or `*` toggle favorite
 - `Alt+q` quit
 
+The menu displays the provider that will be used for a new chat. With no highlighted session, new chats use Codex, or Claude when started with `--provider claude`. You can create a first chat even when there are no saved sessions.
+
 ## Host Behavior
 
-- Every visible host tab has a stable tab ID, and each Codex session ID maps to at most one tab.
-- Selecting an already-open Codex session focuses its existing tab instead of starting another process.
-- If Codex has exited to that tab's PowerShell prompt, selecting the session resumes Codex again in the same tab.
-- The `+` button opens a standalone PowerShell tab without starting Codex.
+- Every visible host tab has a stable tab ID, and each `(provider, session ID)` maps to at most one tab.
+- Selecting an already-open session focuses its existing tab instead of starting another process.
+- If the agent has exited to that tab's PowerShell prompt, selecting the session resumes the agent again in the same tab.
+- The `+` button opens a standalone PowerShell tab.
 - The monochrome orange robot button opens the Codex-FE session picker in a temporary tab.
 - The picker tab closes after the picker exits and is not added to `Ctrl+Shift+T` history. Selecting a session leaves the selected or existing session tab active.
 - Drag tabs to reorder them; the order is saved and restored with the workspace.
@@ -112,17 +126,21 @@ codex-fe-host\start.cmd
 - Closed-tab history persists across host restarts and retains the 50 most recently closed tabs.
 - Closing the host application preserves its remaining tab list.
 - Closing a maximized host remembers that state and restores the next host window maximized.
-- Reopening the host resumes every saved Codex session in the same order.
+- Reopening the host resumes every saved Codex and Claude session in the same order.
 - `Ctrl+Tab` and `Ctrl+Shift+Tab` switch tabs.
 - `Ctrl+W` closes the active tab.
 - `Ctrl+C` copies selected terminal text; with no selection it still interrupts the running command.
 - `Ctrl+V` pastes clipboard text through the active terminal.
-- A tab's orange `PS` marker becomes a Braille spinner while its terminal is producing output.
-- New chats begin as pending tabs and are updated with their generated Codex session ID once the session JSONL appears.
-- Terminal scrollback is not persisted; the Codex conversation itself is resumed by session ID.
+- A tab's `CX`, `CL`, or `PS` marker becomes a Braille spinner while its terminal is producing output, retaining its provider color.
+- New Codex chats resolve their session IDs when the session JSONL appears. New Claude chats start with an assigned UUID and use that exact ID on restoration.
+- Terminal scrollback is not persisted; each conversation is resumed by its provider and session ID.
 
 On the first host launch, the removed Python dashboard files `codex-fe-workspace.json` and `codex-fe-dashboard.json` are renamed with `.legacy-<timestamp>` and ignored. They are not imported, so the managed host begins with a clean tab list.
 
-Favorites remain in `~/.codex/session_favorites.json`. Cached session metadata remains in `~/.codex/codex-fe-session-details-cache.json`.
+Favorites remain in `~/.codex/session_favorites.json`, keyed by provider and session ID. Existing UUID-only favorites and tabs without a provider migrate to Codex automatically. Codex metadata is cached in `codex-fe-session-details-cache.json`; Claude metadata is cached in `codex-fe-claude-details-cache.json` in the same Codex home. Claude caching reads only complete appended records after the initial scan and reparses changed or replaced files.
 
 New and resumed Codex sessions launch with `--dangerously-bypass-approvals-and-sandbox --no-alt-screen`.
+
+New and resumed Claude sessions launch with `--dangerously-skip-permissions`. Claude keeps its own terminal display behavior; Codex's `--no-alt-screen` is not passed to Claude. Both providers use their existing CLI authentication, settings, and project instructions.
+
+To override executable discovery, set `CODEX_FE_CODEX_EXE` or `CODEX_FE_CLAUDE_EXE` to the corresponding executable or CMD launcher path.

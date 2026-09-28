@@ -93,20 +93,13 @@ test("xterm owns terminal padding so FitAddon subtracts it", () => {
 });
 
 test("new and resumed Codex sessions share full-trust non-alt-screen args", () => {
-	const main = fs.readFileSync(
-		path.resolve(__dirname, "..", "main.js"),
-		"utf8",
-	);
-
-	assert.match(
-		main,
-		/const CODEX_LAUNCH_ARGS = \[\s*"--dangerously-bypass-approvals-and-sandbox",\s*"--no-alt-screen",\s*\];/,
-	);
-	assert.match(
-		main,
-		/\["-C", tab\.cwd, "resume", tab\.sessionId, \.\.\.CODEX_LAUNCH_ARGS\]/,
-	);
-	assert.match(main, /\["-C", tab\.cwd, \.\.\.CODEX_LAUNCH_ARGS\]/);
+	const { providerLaunchArgs } = require("../providers");
+	for (const kind of ["session", "pending_new_chat"]) {
+		const args = providerLaunchArgs({ kind, cwd: "D:\\work", sessionId: "one" });
+		assert.ok(args.includes("--dangerously-bypass-approvals-and-sandbox"));
+		assert.ok(args.includes("--no-alt-screen"));
+		assert.equal(args.includes("resume"), kind === "session");
+	}
 });
 
 test("tab drag requests persisted reordering by stable IDs", () => {

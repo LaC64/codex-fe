@@ -98,3 +98,13 @@
 - Added a distinct persisted `picker` tab kind that launches Codex-FE directly and removes itself when the picker exits.
 - Excluded picker tabs from closed-tab history so selecting a session or quitting the picker does not leave a dead shell tab or a restorable transient entry.
 - Preserved active picker tabs during whole-host shutdown so they can restart with the saved workspace like other currently open tabs.
+
+## 2026-09-27 - Claude Code Support
+
+- Added a unified Codex/Claude picker with provider-qualified identities across filtering, conversation search, favorites, selection, tab reuse, and restoration.
+- Added Claude transcript indexing with complete-record incremental caching, explicit-name precedence, last-message timestamps, latest folder/model, and exclusion of sidechains, subagents, orphans, and metadata-only stubs.
+- Added `--provider all|codex|claude` and `--claude-home`, honoring `CLAUDE_CONFIG_DIR` by default. Empty interactive lists still allow creating a first chat.
+- Added blue Codex `CX` and orange Claude `CL` indicators in the picker and host tabs, with gray standalone PowerShell `PS` markers.
+- Added Claude full-trust launches, deterministic new-chat UUIDs, transcript title/folder refresh, and provider-preserving closed-tab and host restart behavior.
+- Migrated legacy UUID favorites and provider-less workspace tabs to Codex while retaining the existing shared host workspace location.
+- Verified 16 Python tests, 21 Node tests, and isolated Electron/ConPTY integration covering mixed-provider launches, tab reuse, closed-tab recovery, colors, and host restart. Cached listing of 379 local sessions completed in approximately 0.63 seconds; no running user host was restarted.

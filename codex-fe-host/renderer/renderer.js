@@ -58,7 +58,7 @@ function paintActivityIndicators() {
 	];
 	for (const [tabId, mark] of tabMarks) {
 		const busy = outputActivityByTabId.has(tabId);
-		mark.textContent = busy ? frame : "PS";
+		mark.textContent = busy ? frame : mark.dataset.idleLabel;
 		mark.classList.toggle("busy", busy);
 		mark.parentElement.setAttribute("aria-busy", String(busy));
 	}
@@ -238,15 +238,18 @@ function renderTabs() {
 	for (const tab of workspace.tabs) {
 		const tabButton = document.createElement("div");
 		tabButton.className = `tab${tab.tabId === workspace.activeTabId ? " active" : ""}`;
-		tabButton.title = `${tab.title}\n${tab.cwd}`;
 		tabButton.dataset.tabId = tab.tabId;
+		const isAgent = ["session", "pending_new_chat"].includes(tab.kind);
+		tabButton.dataset.provider = isAgent ? (tab.provider || "codex") : "shell";
+		tabButton.title = `${isAgent ? `${tab.provider || "codex"}: ` : ""}${tab.title}\n${tab.cwd}`;
 		tabButton.tabIndex = 0;
 		tabButton.setAttribute("role", "tab");
 		tabButton.draggable = true;
 
 		const mark = document.createElement("span");
 		mark.className = "shell-mark";
-		mark.textContent = "PS";
+		mark.dataset.idleLabel = isAgent ? (tab.provider === "claude" ? "CL" : "CX") : "PS";
+		mark.textContent = mark.dataset.idleLabel;
 		mark.setAttribute("aria-hidden", "true");
 		tabMarks.set(tab.tabId, mark);
 		const title = document.createElement("span");

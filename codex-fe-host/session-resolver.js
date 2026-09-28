@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { readClaudeMetadata } = require("./providers");
 
 function normalizePath(value) {
 	return path.resolve(String(value || "")).toLowerCase();
@@ -72,13 +73,13 @@ function findCandidates(codexHome, pendingTabs) {
 function resolvePendingTabs(workspace, codexHome) {
 	const result = { value: false };
 	const pendingTabs = workspace.tabs
-		.filter((tab) => tab.kind === "pending_new_chat")
+		.filter((tab) => tab.kind === "pending_new_chat" && (tab.provider || "codex") === "codex")
 		.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 	if (!pendingTabs.length) {
 		return result;
 	}
 	const knownIds = new Set(
-		workspace.tabs.filter((tab) => tab.kind === "session").map((tab) => tab.sessionId),
+		workspace.tabs.filter((tab) => tab.kind === "session" && (tab.provider || "codex") === "codex").map((tab) => tab.sessionId),
 	);
 	const candidates = findCandidates(codexHome, pendingTabs)
 		.filter((candidate) => !knownIds.has(candidate.sessionId))
@@ -129,8 +130,35 @@ function loadSessionTitles(indexFile) {
 	return titles;
 }
 
+function refreshClaudeTabs(workspace) {
+	let changed = false;
+	for (const tab of workspace.tabs) {
+		if (tab.provider !== "claude" || !["session", "pending_new_chat"].includes(tab.kind)) {
+			continue;
+		}
+		const metadata = readClaudeMetadata(tab);
+		if (!metadata?.hasMessages) {
+			continue;
+		}
+		const updates = {
+			kind: "session", sessionFile: metadata.file,
+			title: metadata.customTitle || metadata.aiTitle || tab.title,
+			model: metadata.model || tab.model,
+			cwd: metadata.cwd || tab.cwd,
+		};
+		for (const [key, value] of Object.entries(updates)) {
+			if (tab[key] !== value) {
+				tab[key] = value;
+				changed = true;
+			}
+		}
+	}
+	return changed;
+}
+
 module.exports = {
 	loadSessionTitles,
 	readSessionMeta,
 	resolvePendingTabs,
+	refreshClaudeTabs,
 };
