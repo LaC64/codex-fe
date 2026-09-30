@@ -15,7 +15,7 @@ Codex-FE provides one session picker for Codex CLI and Claude Code and opens sel
 - Remove a session from future restoration by closing its host tab
 - Preserve chat titles, models, and full-trust startup for both providers
 
-Only explicitly named sessions are considered named: Codex `/rename`, or Claude `/rename` and `--name`. Use `Alt+a` to include unnamed sessions, including Claude's automatically generated AI titles. Explicit Claude names take precedence over generated titles.
+Only explicitly named sessions are considered named: Codex `/rename`, or Claude `/rename` and `--name`. Use `Alt+a` to include unnamed sessions, including Claude's automatically generated AI titles. A successful Claude `/rename` takes precedence over stale title records written later by another process; other explicit names still take precedence over generated titles.
 
 The picker shows a Provider column: blue `CX` for Codex and orange `CL` for Claude. Host tabs use the same colors and labels; standalone PowerShell tabs use gray `PS`.
 

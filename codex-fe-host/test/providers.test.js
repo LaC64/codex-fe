@@ -78,6 +78,43 @@ test("Claude new-chat IDs persist and resolve only to their own transcript", () 
 	}
 });
 
+test("successful Claude fork rename survives later stale title metadata", () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-claude-rename-"));
+	try {
+		const id = "cccccccc-1111-4222-8333-444444444444";
+		const directory = path.join(home, "projects", "fork");
+		fs.mkdirSync(directory, { recursive: true });
+		const file = path.join(directory, `${id}.jsonl`);
+		const tab = { tabId: "fork", provider: "claude", providerHome: home,
+			kind: "session", sessionId: id, cwd: home, title: "Performance Testing" };
+		const workspace = { tabs: [tab] };
+		const write = (rows, mode = "append") => fs[mode === "append" ? "appendFileSync" : "writeFileSync"](
+			file, rows.map(row => JSON.stringify({ sessionId: id, ...row }) + "\n").join(""));
+		write([
+			{ type: "user", message: { content: "Forked session" } },
+			{ type: "custom-title", customTitle: "Performance Testing" },
+			{ type: "custom-title", customTitle: "Performance Testing RVT" },
+			{ type: "system", subtype: "local_command",
+				content: "<local-command-stdout>Session renamed to: Performance Testing RVT</local-command-stdout>",
+				commandRun: { command: "rename", args: "Performance Testing RVT" } },
+			{ type: "custom-title", customTitle: "Performance Testing" },
+			{ type: "agent-name", agentName: "Performance Testing" },
+		], "write");
+		assert.equal(refreshClaudeTabs(workspace), true);
+		assert.equal(tab.title, "Performance Testing RVT");
+		assert.equal(refreshClaudeTabs(workspace), false);
+		write([{ type: "custom-title", customTitle: "Performance Testing" }]);
+		assert.equal(refreshClaudeTabs(workspace), false);
+		write([{ type: "system", subtype: "local_command",
+			content: "<local-command-stdout>Session renamed to: Final Name</local-command-stdout>",
+			commandRun: { command: "rename", args: "Final Name" } }]);
+		assert.equal(refreshClaudeTabs(workspace), true);
+		assert.equal(tab.title, "Final Name");
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
 test("Claude metadata streams large rows and retries incomplete title records", () => {
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-fe-claude-stream-"));
 	try {

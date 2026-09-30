@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+CLAUDE_CACHE_VERSION = 2
+
 
 @dataclass
 class SessionEntry:
@@ -69,6 +71,12 @@ def apply_claude_record(state: dict[str, Any], record: dict[str, Any], session_i
 		state["custom_title"] = str(record.get("customTitle") or "").strip()
 	elif kind == "ai-title":
 		state["ai_title"] = str(record.get("aiTitle") or "").strip()
+	elif kind == "system" and record.get("subtype") == "local_command":
+		command = record.get("commandRun")
+		if (isinstance(command, dict) and command.get("command") == "rename"
+			and isinstance(command.get("args"), str)
+			and str(record.get("content") or "").startswith("<local-command-stdout>Session renamed to:")):
+			state["rename_title"] = command["args"].strip()
 	if kind not in ("user", "assistant"):
 		return
 	message = record.get("message")
@@ -104,7 +112,7 @@ def load_claude_entries(home: Path, cache_file: Path) -> list[SessionEntry]:
 	"""Cache complete JSONL offsets; appended partial records are retried next refresh."""
 	try:
 		cache = json.loads(cache_file.read_text(encoding="utf-8"))
-		cache = cache.get("files", {}) if cache.get("version") == 1 else {}
+		cache = cache.get("files", {}) if cache.get("version") == CLAUDE_CACHE_VERSION else {}
 		if not isinstance(cache, dict):
 			cache = {}
 	except (OSError, ValueError, AttributeError):
@@ -154,12 +162,12 @@ def load_claude_entries(home: Path, cache_file: Path) -> list[SessionEntry]:
 				continue
 			entries.append(SessionEntry(
 				session_id=file.stem,
-				thread_name=state.get("custom_title") or state.get("ai_title")
+				thread_name=state.get("rename_title") or state.get("custom_title") or state.get("ai_title")
 					or state.get("preview") or "(unnamed session)",
 				updated_at=state.get("updated_at", ""),
 				created_at=state.get("created_at", ""),
 				cwd=state.get("cwd", ""), model=state.get("model", ""),
-				is_named=bool(state.get("custom_title")),
+				is_named=bool(state.get("rename_title") or state.get("custom_title")),
 				session_file=str(file), provider="claude", provider_home=str(home),
 			))
 		except OSError:
@@ -168,7 +176,7 @@ def load_claude_entries(home: Path, cache_file: Path) -> list[SessionEntry]:
 		try:
 			cache_file.parent.mkdir(parents=True, exist_ok=True)
 			temporary = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.tmp")
-			temporary.write_text(json.dumps({"version": 1, "files": updated_cache}), encoding="utf-8")
+			temporary.write_text(json.dumps({"version": CLAUDE_CACHE_VERSION, "files": updated_cache}), encoding="utf-8")
 			temporary.replace(cache_file)
 		except OSError:
 			pass

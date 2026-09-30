@@ -148,6 +148,13 @@ function readClaudeMetadata(tab) {
 				}
 				if (row.type === "custom-title") cached.state.customTitle = row.customTitle || "";
 				if (row.type === "ai-title") cached.state.aiTitle = row.aiTitle || "";
+				if (row.type === "system" && row.subtype === "local_command" &&
+					row.commandRun?.command === "rename" &&
+					typeof row.commandRun.args === "string" &&
+					typeof row.content === "string" &&
+					row.content.startsWith("<local-command-stdout>Session renamed to:")) {
+					cached.state.renameTitle = row.commandRun.args.trim();
+				}
 				if (["user", "assistant"].includes(row.type) && row.message) {
 					cached.state.hasMessages = true;
 					if (row.cwd) cached.state.cwd = row.cwd;

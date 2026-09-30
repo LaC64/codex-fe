@@ -57,6 +57,49 @@ class ClaudeSessionTests(unittest.TestCase):
 		self.assertEqual(CODEX_FE.apply_filter_and_sort([entry], "", set(), False), [])
 		self.assertEqual(len(CODEX_FE.apply_filter_and_sort([entry], "", set(), True)), 1)
 
+	def test_successful_fork_rename_beats_later_stale_title_records(self):
+		self.write(self.message(), {"type": "custom-title", "customTitle": "Performance Testing"},
+			{"type": "custom-title", "customTitle": "Performance Testing RVT"},
+			{"type": "agent-name", "agentName": "Performance Testing RVT"},
+			{"type": "system", "subtype": "local_command",
+				"content": "<local-command-stdout>Session renamed to: Performance Testing RVT</local-command-stdout>",
+				"commandRun": {"command": "rename", "args": "Performance Testing RVT"}},
+			{"type": "custom-title", "customTitle": "Performance Testing"},
+			{"type": "agent-name", "agentName": "Performance Testing"})
+		entry = self.load()[0]
+		self.assertEqual(entry.thread_name, "Performance Testing RVT")
+		self.assertTrue(entry.is_named)
+		self.assertEqual(self.load()[0].thread_name, "Performance Testing RVT")
+		self.write({"type": "custom-title", "customTitle": "Performance Testing"}, mode="a")
+		self.assertEqual(self.load()[0].thread_name, "Performance Testing RVT")
+		self.write({"type": "system", "subtype": "local_command",
+			"content": "<local-command-stdout>Session renamed to: Final Name</local-command-stdout>",
+			"commandRun": {"command": "rename", "args": "Final Name"}}, mode="a")
+		self.assertEqual(self.load()[0].thread_name, "Final Name")
+
+	def test_failed_rename_and_agent_name_do_not_override_explicit_title(self):
+		self.write(self.message(), {"type": "custom-title", "customTitle": "Original"},
+			{"type": "agent-name", "agentName": "Other"},
+			{"type": "system", "subtype": "local_command",
+				"content": "<local-command-stderr>Rename failed</local-command-stderr>",
+				"commandRun": {"command": "rename", "args": "Other"}})
+		self.assertEqual(self.load()[0].thread_name, "Original")
+
+	def test_old_cache_version_rebuilds_rename_state(self):
+		self.write(self.message(), {"type": "custom-title", "customTitle": "Original"},
+			{"type": "system", "subtype": "local_command",
+				"content": "<local-command-stdout>Session renamed to: Updated</local-command-stdout>",
+				"commandRun": {"command": "rename", "args": "Updated"}})
+		self.assertEqual(self.load()[0].thread_name, "Updated")
+		cached = json.loads(self.cache.read_text(encoding="utf-8"))
+		self.assertEqual(cached["version"], providers.CLAUDE_CACHE_VERSION)
+		cached["version"] = 1
+		cached["files"][str(self.file)]["state"].pop("rename_title")
+		self.cache.write_text(json.dumps(cached), encoding="utf-8")
+		self.assertEqual(self.load()[0].thread_name, "Updated")
+		self.assertEqual(json.loads(self.cache.read_text(encoding="utf-8"))["version"],
+			providers.CLAUDE_CACHE_VERSION)
+
 	def test_main_user_preview_excludes_tool_results_and_sidechains(self):
 		self.write(self.message("wrong", isSidechain=True),
 			{"type": "user", "message": {"content": [{"type": "tool_result", "content": "tool secret"}]}},

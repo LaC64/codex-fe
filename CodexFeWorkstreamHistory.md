@@ -121,3 +121,9 @@
 - Made the explicit chooser result authoritative for both launch paths instead of inheriting the highlighted session's provider. The highlighted folder is still reused; Claude config homes are retained only from Claude rows, and Codex launches carry no Claude config home.
 - Kept `--provider` as a session-list filter, not a restriction on new-chat provider choices. The host protocol and persisted workspace are unchanged, and running user terminals remain untouched.
 - Verified 27 Python tests, 23 Node tests, and Python compilation. New coverage exercises both shortcuts through the actual picker/main dispatch, default/reset behavior, arrow selection, cancellation with filter/selection preservation, empty lists, cross-provider configuration handling, and invalid-provider rejection. No live agent was launched or stopped during verification.
+
+## 2026-09-30 - Claude Fork Rename Precedence
+
+- Fixed Claude transcript title projection so the latest successful `/rename` command wins over stale `custom-title` records written afterward by another process. This resolves the real fork case where `Performance Testing RVT` reverted to `Performance Testing` in the picker after a later metadata write.
+- Applied the same precedence to managed host-tab title refresh, retaining existing `custom-title` and AI-title fallbacks for sessions without a successful rename. Bumped the picker metadata cache version to rebuild title state once without editing source transcripts or workspace tabs.
+- Verified 30 Python tests, 24 Node tests, isolated Electron/ConPTY integration, and both picker and host metadata against the fork's UUID after rebuilding the cache. The fork now lists as `Performance Testing RVT` while the original retains `Performance Testing`. User transcripts and running terminals were not modified.

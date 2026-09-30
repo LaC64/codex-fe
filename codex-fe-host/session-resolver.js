@@ -142,7 +142,7 @@ function refreshClaudeTabs(workspace) {
 		}
 		const updates = {
 			kind: "session", sessionFile: metadata.file,
-			title: metadata.customTitle || metadata.aiTitle || tab.title,
+			title: metadata.renameTitle || metadata.customTitle || metadata.aiTitle || tab.title,
 			model: metadata.model || tab.model,
 			cwd: metadata.cwd || tab.cwd,
 		};
